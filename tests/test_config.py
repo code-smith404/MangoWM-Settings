@@ -491,5 +491,87 @@ class WallpaperTests(TempHomeTestCase):
         self.assertIn("No such image", msg)
 
 
+class UnsetTests(TempHomeTestCase):
+    """unset(): drop a key's lines so MangoWM falls back to its defaults."""
+
+    def test_removes_line_and_keeps_neighbours(self):
+        self.write("config.conf",
+                   "# keep me\nborder_px = 2\ngap_inner_horizontal = 8\n\nsloppy_focus = 0\n")
+        cfg = engine(); cfg.load()
+        self.assertTrue(cfg.unset("gap_inner_horizontal"))
+        cfg.save()
+        with open(self.root) as fh:
+            self.assertEqual(fh.read(),
+                             "# keep me\nborder_px = 2\n\nsloppy_focus = 0\n")
+        self.assertIsNone(cfg.get("gap_inner_horizontal"))
+
+    def test_removes_from_included_file(self):
+        self.write("inc.conf", "border_px = 2\ngap_inner_horizontal = 8\n")
+        self.write("config.conf", "source = inc.conf\ngap_inner_horizontal = 9\n")
+        cfg = engine(); cfg.load()
+        self.assertEqual(cfg.get("gap_inner_horizontal"), "9")
+        self.assertTrue(cfg.unset("gap_inner_horizontal"))
+        self.assertIsNone(cfg.get("gap_inner_horizontal"))
+        cfg.save()
+        with open(os.path.join(self.cfgdir, "inc.conf")) as fh:
+            self.assertEqual(fh.read(), "border_px = 2\n")
+
+    def test_unset_unknown_key_returns_false(self):
+        self.write("config.conf", "border_px = 2\n")
+        cfg = engine(); cfg.load()
+        self.assertFalse(cfg.unset("gap_inner_horizontal"))
+
+    def test_values_reindexed_after_unset(self):
+        self.write("config.conf", "border_px = 2\nbordergap = 1\n")
+        cfg = engine(); cfg.load()
+        cfg.unset("border_px")
+        self.assertEqual(cfg.get("bordergap"), "1")
+        # a later set() must create a fresh line, not resurrect the old one
+        cfg.set("border_px", "5")
+        cfg.save()
+        with open(self.root) as fh:
+            self.assertEqual(fh.read(), "bordergap = 1\nborder_px = 5\n")
+
+
+class SearchTests(unittest.TestCase):
+    """Ctrl+F matching across pages and individual settings."""
+
+    def test_empty_query_matches_everything(self):
+        for key in ms.PAGE_ORDER:
+            self.assertTrue(ms.page_matches(key, ""))
+
+    def test_page_title_matches(self):
+        self.assertTrue(ms.page_matches("keybindings", "keybind"))
+        self.assertTrue(ms.page_matches("behavior", "window"))
+
+    def test_setting_matches_its_page(self):
+        # "gap" appears in option labels of Appearance and Layouts.
+        self.assertTrue(ms.page_matches("appearance", "gap"))
+        self.assertTrue(ms.page_matches("layouts", "gap"))
+        self.assertFalse(ms.page_matches("keybindings", "gap"))
+
+    def test_case_insensitive(self):
+        self.assertTrue(ms.page_matches("appearance", "GAP"))
+
+    def test_option_matches_label_key_and_desc(self):
+        opt = ms.SCHEMA_OPTIONS["gap_inner_horizontal"]
+        self.assertTrue(ms.option_matches(opt, "gap"))
+        self.assertTrue(ms.option_matches(opt, "inner"))
+        self.assertTrue(ms.option_matches(opt, "gap_inner_horizontal"))
+        self.assertFalse(ms.option_matches(opt, "scrollbar"))
+
+    def test_every_page_has_an_icon_candidate(self):
+        for key in ms.PAGE_ORDER:
+            self.assertIn(key, ms.PAGE_ICON_CANDIDATES)
+            self.assertTrue(ms.PAGE_ICON_CANDIDATES[key])
+
+    def test_schema_groups_have_no_orphan_options(self):
+        # Every option on a schema page belongs to a titled section, which is
+        # what the UI uses to render frames.
+        for key in ("appearance", "animations", "behavior", "layouts", "input"):
+            for opt in ms.SCHEMA[key]:
+                self.assertTrue(opt.group, "%s has no group" % opt.key)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

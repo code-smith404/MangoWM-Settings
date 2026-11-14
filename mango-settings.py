@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -400,6 +400,31 @@ PAGE_TITLES = {
     "system": "System info",
 }
 
+# Candidate icons per page.  The first name that exists in the user's icon
+# theme is used; symbolic variants are preferred so icons follow the theme
+# colour.  Several names are tried because themes differ (Adwaita ships
+# "preferences-system-windows-symbolic", Papirus does not).
+PAGE_ICON_CANDIDATES = {
+    "appearance": ["preferences-desktop-theme", "applications-graphics",
+                   "preferences-desktop"],
+    "animations": ["media-playback-start", "preferences-system-windows"],
+    "behavior": ["preferences-system-windows", "window-new", "preferences-system"],
+    "layouts": ["view-grid", "view-paged"],
+    "keybindings": ["preferences-desktop-keyboard", "input-keyboard"],
+    "workspaces": ["view-paged", "view-grid"],
+    "windowrules": ["window-new", "preferences-system-windows"],
+    "monitors": ["video-display", "computer"],
+    "input": ["input-mouse", "preferences-desktop-peripherals", "input-keyboard"],
+    "startup": ["application-x-executable", "utilities-terminal"],
+    "theming": ["applications-graphics", "preferences-desktop-theme"],
+    "background": ["preferences-desktop-wallpaper", "applications-graphics"],
+    "notifications": ["preferences-system-notifications", "dialog-information"],
+    "files": ["text-x-generic", "document-open", "accessories-text-editor"],
+    "system": ["computer", "dialog-information"],
+}
+# Kept for backwards compatibility / external scripts that import it.
+PAGE_ICONS = dict((k, v[0]) for k, v in PAGE_ICON_CANDIDATES.items())
+
 
 def _P(key, label, type_, default, min_=None, max_=None, choices=None,
        desc="", group=None):
@@ -697,6 +722,38 @@ MULTI_KEYS = {"exec", "exec_once"}          # may appear many times in config.co
 HIDDEN_OPTION_KEYS = {"exec", "exec_once"}
 
 
+def page_matches(key, needle):
+    """True when a page should stay visible for the Ctrl+F search text.
+
+    A page matches when its title/key matches or when any of its settings
+    (label, key, section or description) does — so searching "gap" keeps
+    Appearance and Layouts in the sidebar.
+    """
+    if not needle:
+        return True
+    needle = needle.lower().strip()
+    if not needle:
+        return True
+    if needle in PAGE_TITLES.get(key, "").lower() or needle in key:
+        return True
+    for opt in SCHEMA.get(key, []):
+        haystack = " ".join((opt.label or "", opt.key or "",
+                             opt.group or "", opt.desc or "")).lower()
+        if needle in haystack:
+            return True
+    return False
+
+
+def option_matches(opt, needle):
+    """True when one setting matches the search text (see page_matches)."""
+    if not needle:
+        return True
+    needle = needle.lower().strip()
+    haystack = " ".join((opt.label or "", opt.key or "",
+                         opt.group or "", opt.desc or "")).lower()
+    return needle in haystack
+
+
 # ---------------------------------------------------------------------------
 # MangoConfig — the full config graph (root file + includes)
 # ---------------------------------------------------------------------------
@@ -877,6 +934,52 @@ class MangoConfig(object):
         doc.dirty = True
         entries.pop(index if index != -1 else -1)
         return True
+
+    def unset(self, key):
+        """Delete every assignment of ``key`` so MangoWM uses its default.
+
+        Only that key's lines are removed; comments, blank lines and the
+        ordering of everything else are untouched.  Returns True when at
+        least one line was removed.
+        """
+        entries = self.values.get(key)
+        if not entries:
+            return False
+        removed = 0
+        seen = set()                      # repeated includes list a line twice
+        for doc, line, _value in entries:
+            if id(line) in seen:
+                continue
+            seen.add(id(line))
+            try:
+                doc.lines.remove(line)
+            except ValueError:
+                continue
+            doc.dirty = True
+            removed += 1
+        if removed:
+            self._reindex()
+        return bool(removed)
+
+    def _reindex(self):
+        """Rebuild ``vars``/``values`` from the in-memory documents.
+
+        ``self.order`` already holds the flattened include traversal (with
+        repeats), so walking it reproduces MangoWM's "last assignment wins"
+        and variable expansion rules without touching the disk.
+        """
+        self.vars = {}
+        self.values = {}
+        for real in self.order:
+            doc = self.docs.get(real)
+            if doc is None:
+                continue
+            for line in doc.lines:
+                if isinstance(line, VarLine):
+                    self.vars[line.name] = line.value
+                elif isinstance(line, OptionLine):
+                    self.values.setdefault(line.key, []).append(
+                        (doc, line, self._expand_vars(line.value)))
 
     def validate(self, key, value):
         opt = self.schema_by_key.get(key)
@@ -1354,6 +1457,28 @@ def run_gui(args):
 
     from gi.repository import Gtk, Gdk, Gio, GLib
 
+    # Icon themes differ: Adwaita ships symbolic icons, Papirus mostly plain
+    # ones.  Resolve once per page, preferring the symbolic variant (it follows
+    # the app theme colour), then the plain name, then a neutral fallback.
+    _ICON_CACHE = {}
+
+    def page_icon(key, size=24):
+        if key in _ICON_CACHE:
+            return _ICON_CACHE[key]
+        theme = Gtk.IconTheme.get_default()
+        names = PAGE_ICON_CANDIDATES.get(key, [])
+        # Symbolic variants of every candidate first (they follow the theme
+        # colour), then the plain names, then neutral fallbacks.
+        ordered = ([n + "-symbolic" for n in names] + list(names) +
+                   ["preferences-other-symbolic", "preferences-other",
+                    "emblem-system-symbolic"])
+        for candidate in ordered:
+            if theme.lookup_icon(candidate, size, 0) is not None:
+                _ICON_CACHE[key] = candidate
+                return candidate
+        _ICON_CACHE[key] = "image-missing"
+        return "image-missing"
+
     # ------------------------------------------------------------------ pages
     class PageBase(Gtk.Box):
         """Common scaffolding: titled, scrollable, reports changes upward."""
@@ -1364,10 +1489,16 @@ def run_gui(args):
             super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             self.app = app
             self.set_border_width(12)
+            # Header: category icon + title, GNOME Settings style.
+            head_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            self.head_icon = Gtk.Image.new_from_icon_name(
+                page_icon(self.page_key, 32), Gtk.IconSize.DND)
+            head_box.pack_start(self.head_icon, False, False, 0)
             head = Gtk.Label(xalign=0)
             head.set_markup("<b>%s</b>" % GLib.markup_escape_text(PAGE_TITLES[self.page_key]))
-            head.get_style_context().add_class("large-title") if hasattr(head.get_style_context(), "add_class") else None
-            self.pack_start(head, False, False, 6)
+            head.get_style_context().add_class("large-title")
+            head_box.pack_start(head, False, False, 0)
+            self.pack_start(head_box, False, False, 2)
             self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             scroll = Gtk.ScrolledWindow()
             scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1414,16 +1545,40 @@ def run_gui(args):
             grid = None
             current_group = None
             self.widgets = {}
+            self.row_labels = {}
+            needle = (getattr(self.app, "search_needle", "") or "").lower().strip()
+            # A page-title match shows the whole page; otherwise only matching
+            # options are listed so Ctrl+F can search *settings*, not just pages.
+            title_match = bool(needle and needle in PAGE_TITLES[self.page_key].lower())
+            total = 0
+            shown = 0
 
             def finish_frame():
                 if grid is not None:
                     frame = self.add_frame()
                     frame.add(grid)
 
+            if needle and not title_match:
+                matched = [o for o in SCHEMA[self.page_key] if self._matches(o, needle)]
+                total = len(SCHEMA[self.page_key])
+                if matched:
+                    label = Gtk.Label(xalign=0)
+                    label.set_markup("<small>%d of %d settings match \u201c%s\u201d</small>"
+                                     % (len(matched), total,
+                                        GLib.markup_escape_text(needle)))
+                    label.get_style_context().add_class("dim-label")
+                    self.content.pack_start(label, False, False, 2)
+                else:
+                    self.add_note("No settings on this page match \u201c%s\u201d."
+                                  % needle)
+
             row = 0
             for opt in SCHEMA[self.page_key]:
                 if self.page_key != "appearance" and opt.key in HIDDEN_OPTION_KEYS:
                     continue
+                if needle and not title_match and not self._matches(opt, needle):
+                    continue
+                shown += 1
                 # Start a new titled frame whenever the section changes.
                 if opt.group != current_group:
                     finish_frame()
@@ -1436,20 +1591,61 @@ def run_gui(args):
                     grid.set_margin_top(2)
                     current_group = opt.group
                     row = 0
-                grid.attach(Gtk.Label(label=opt.label, xalign=0), 0, row, 1, 1)
+                label = Gtk.Label(xalign=0)
+                self._decorate_label(label, opt)
+                self.row_labels[opt.key] = label
+                grid.attach(label, 0, row, 1, 1)
                 widget = self._make_widget(opt)
                 self.widgets[opt.key] = (opt, widget)
                 grid.attach(widget, 1, row, 1, 1)
+                reset = Gtk.Button.new_from_icon_name("edit-undo",
+                                                     Gtk.IconSize.BUTTON)
+                reset.set_relief(Gtk.ReliefStyle.NONE)
+                reset.set_tooltip_text("Reset to MangoWM default (%s)" % opt.default)
+                reset.set_sensitive(self.app.config.get(opt.key) is not None)
+                reset.connect("clicked", self.on_reset, opt)
+                grid.attach(reset, 2, row, 1, 1)
                 if opt.desc:
                     note = Gtk.Label(xalign=0)
                     note.set_markup("<small>%s</small>" % GLib.markup_escape_text(opt.desc))
                     note.get_style_context().add_class("dim-label")
-                    grid.attach(note, 2, row, 1, 1)
+                    grid.attach(note, 3, row, 1, 1)
                 row += 1
             finish_frame()
             if not self.widgets:
                 self.add_note("Nothing to configure here.")
             self.show_all()
+
+        def rebuild(self):
+            """Re-render the page from the config (used after a reset)."""
+            for child in list(self.content.get_children()):
+                self.content.remove(child)
+            self.build()
+
+        @staticmethod
+        def _matches(opt, needle):
+            return option_matches(opt, needle)
+
+        def _decorate_label(self, label, opt):
+            """Bold = explicitly set in the config; plain = MangoWM default."""
+            entries = self.app.config.values.get(opt.key)
+            title = GLib.markup_escape_text(opt.label)
+            if entries:
+                doc, line, _value = entries[-1]
+                label.set_markup("<b>%s</b>" % title)
+                label.set_tooltip_text("Set in %s%s" % (
+                    os.path.basename(doc.path),
+                    (" line %d" % (doc.lines.index(line) + 1))
+                    if line in doc.lines else ""))
+            else:
+                label.set_text(opt.label)
+                label.set_tooltip_text("Not in your config \u2014 using MangoWM's "
+                                       "default: %s" % opt.default)
+
+        def on_reset(self, _btn, opt):
+            if self.app.config.unset(opt.key):
+                self.mark_changed()
+                self.rebuild()
 
         def _current(self, opt):
             val = self.app.config.get(opt.key)
@@ -2086,11 +2282,19 @@ def run_gui(args):
                  "theming", "background", "notifications", "files", "system"]
 
         def __init__(self, app):
+            try:
+                width = int(app.read_ui_pref("width", 980))
+                height = int(app.read_ui_pref("height", 680))
+            except (TypeError, ValueError):
+                width, height = 980, 680
             super().__init__(application=app.gtk_app,
-                             title=APP_NAME, default_width=980, default_height=680)
+                             title=APP_NAME, default_width=width,
+                             default_height=height)
             self.app = app
             self.paned = Gtk.Paned()
             self.add(self.paned)
+            # Remember the window size for next launch.
+            self.connect("destroy", self.on_destroy)
 
             # No title bar: all window controls live in the sidebar instead.
             # The compositor keeps the window title (taskbar/mangobar) but the
@@ -2099,8 +2303,10 @@ def run_gui(args):
             side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             side.set_border_width(8)
 
-            self.search = Gtk.SearchEntry(placeholder_text="Search pages… (Ctrl+F)")
+            self.search = Gtk.SearchEntry(placeholder_text="Search settings… (Ctrl+F)")
             self.search.connect("search-changed", self.on_search)
+            # Esc clears the search and restores the full page.
+            self.search.connect("stop-search", lambda e: e.set_text(""))
             side.pack_start(self.search, False, False, 2)
 
             theme_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -2116,16 +2322,17 @@ def run_gui(args):
             self.sidebar = Gtk.ListBox()
             self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
             self.sidebar.connect("row-selected", self.on_row_selected)
+            self.sidebar.get_style_context().add_class("sidebar")
             side.pack_start(self.sidebar, True, True, 0)
 
-            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            save = Gtk.Button(label="_Save", use_underline=True)
-            save.set_tooltip_text("Save all changed pages (Ctrl+S)")
-            save.connect("clicked", lambda *_: app.action_save())
-            btns.pack_start(save, False, False, 0)
+            self.save_btn = Gtk.Button(label="_Save", use_underline=True)
+            self.save_btn.set_tooltip_text("Save all changed pages (Ctrl+S)")
+            self.save_btn.connect("clicked", lambda *_: app.action_save())
             reload_btn = Gtk.Button(label="Reload Mango")
             reload_btn.set_tooltip_text("Run 'mmsg dispatch reload_config' (Ctrl+R)")
             reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
+            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            btns.pack_start(self.save_btn, False, False, 0)
             btns.pack_start(reload_btn, False, False, 0)
             spacer = Gtk.Box()               # pushes the close button to the right
             spacer.set_hexpand(True)
@@ -2138,7 +2345,7 @@ def run_gui(args):
             side.pack_start(btns, False, False, 2)
 
             self.paned.add1(side)
-            self.paned.set_position(220)
+            self.paned.set_position(self._sidebar_position(side))
 
             # stack
             self.stack = Gtk.Stack()
@@ -2146,12 +2353,39 @@ def run_gui(args):
             self.paned.add2(self.stack)
             self.page_rows = {}
             for key in self.PANES:
-                label = Gtk.Label(label=PAGE_TITLES[key], xalign=0.5)
-                label.set_margin_top(6); label.set_margin_bottom(6)
-                self.sidebar.add(label)
-                row = self.sidebar.get_children()[-1]
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                box.set_border_width(6)
+                icon = Gtk.Image.new_from_icon_name(
+                    page_icon(key, 16), Gtk.IconSize.BUTTON)
+                label = Gtk.Label(label=PAGE_TITLES[key], xalign=0)
+                box.pack_start(icon, False, False, 0)
+                box.pack_start(label, True, True, 0)
+                row.add(box)
+                row.set_tooltip_text(PAGE_TITLES[key])
+                self.sidebar.add(row)
                 self.page_rows[key] = row
+            # Restore the last window geometry, then the first/last page.
             self.sidebar.select_row(self.sidebar.get_children()[0])
+
+        def _sidebar_position(self, side):
+            """Sidebar width that never clips its content.
+
+            GtkPaned allocates child1 at its minimum width even when the
+            handle sits closer to the edge; the overflow then sticks out to
+            the left and gets clipped.  Keep the position at or above that
+            minimum (and within a sane range).
+            """
+            try:
+                min_width = side.get_preferred_width()[0]
+            except Exception:
+                min_width = 200
+            try:
+                saved = int(self.app.read_ui_pref("sidebar", 0))
+            except (TypeError, ValueError):
+                saved = 0
+            width = saved if saved >= min_width else min_width + 24
+            return max(180, min(width, 420))
 
         def on_row_selected(self, _box, row):
             if row is None:
@@ -2167,8 +2401,28 @@ def run_gui(args):
 
         def on_search(self, entry):
             needle = entry.get_text().lower().strip()
+            self.app.search_needle = needle
             for key, row in self.page_rows.items():
-                row.set_visible(not needle or needle in PAGE_TITLES[key].lower())
+                row.set_visible(self.app.page_matches(key, needle))
+            # Re-render the current schema page so its rows are filtered too
+            # (Ctrl+F searches settings, not only page names).
+            row = self.sidebar.get_selected_row()
+            if row is None:
+                return
+            key = self.PANES[list(self.sidebar.get_children()).index(row)]
+            child = self.stack.get_child_by_name(key)
+            if isinstance(child, SchemaPage):
+                self.on_row_selected(self.sidebar, row)
+                self.stack.set_visible_child_name(key)
+
+        def set_dirty(self, dirty):
+            """Reflect unsaved changes on the Save button."""
+            if dirty:
+                self.save_btn.set_label("_Save \u2022")   # bullet = pending
+                self.save_btn.get_style_context().add_class("suggested-action")
+            else:
+                self.save_btn.set_label("_Save")
+                self.save_btn.get_style_context().remove_class("suggested-action")
 
         def current_key(self):
             children = list(self.sidebar.get_children())
@@ -2179,6 +2433,23 @@ def run_gui(args):
             if key in self.page_rows:
                 self.sidebar.select_row(self.page_rows[key])
 
+        def fit_sidebar(self):
+            """Re-apply the sidebar width once widgets are realized."""
+            try:
+                self.paned.set_position(
+                    self._sidebar_position(self.paned.get_child1()))
+            except Exception:
+                pass
+
+        def on_destroy(self, *_a):
+            """Persist the window geometry for the next launch."""
+            try:
+                width, height = self.get_size()
+                self.app.write_ui_pref(width=width, height=height,
+                                       sidebar=self.paned.get_position())
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------ app
     class MangoApp(object):
         def __init__(self, args):
@@ -2187,6 +2458,7 @@ def run_gui(args):
             self.config = None
             self._rule_files = {}
             self.settings_ini = os.path.expanduser(APP_SETTINGS_FILE)
+            self.search_needle = ""      # active Ctrl+F text (settings search)
 
         # -- wiring ---------------------------------------------------------
         def run(self):
@@ -2203,6 +2475,7 @@ def run_gui(args):
             self.gtk_app.add_window(self.window)
             self._install_accelerators()
             self.window.show_all()
+            self.window.fit_sidebar()
             self.apply_theme(self.read_theme_pref())
             self.window.theme_combo.handler_block_by_func(self.on_theme_changed)
             self.window.theme_combo.set_active(
@@ -2269,7 +2542,11 @@ def run_gui(args):
             }[key](self)
 
         def on_page_changed(self, page):
-            pass  # pages self-save or save on Ctrl+S
+            if self.window is not None:
+                self.window.set_dirty(True)
+
+        def page_matches(self, key, needle):
+            return page_matches(key, needle)
 
         def reload_config(self):
             self.load_config()
@@ -2316,6 +2593,7 @@ def run_gui(args):
                 child = self.window.stack.get_child_by_name(key)
                 if child is not None:
                     child.clear_dirty()
+            self.window.set_dirty(False)
             self.error_dialog("Saved %d file(s)." % (len(saved) +
                              sum(1 for rf in self._rule_files.values() if rf.dirty)),
                               error=False)
@@ -2378,6 +2656,20 @@ def run_gui(args):
                 return "system"
 
         def write_theme_pref(self, theme):
+            self.write_ui_pref(theme=theme)
+
+        def read_ui_pref(self, key, default=None):
+            """Read a value from the [ui] section of ~/.config/mango-settings."""
+            try:
+                import configparser
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                return cp.get("ui", key, fallback=default)
+            except Exception:
+                return default
+
+        def write_ui_pref(self, **values):
+            """Merge values into the [ui] section, keeping other keys."""
             try:
                 import configparser
                 os.makedirs(os.path.dirname(self.settings_ini), exist_ok=True)
@@ -2385,7 +2677,8 @@ def run_gui(args):
                 cp.read(self.settings_ini)
                 if not cp.has_section("ui"):
                     cp.add_section("ui")
-                cp.set("ui", "theme", theme)
+                for key, value in values.items():
+                    cp.set("ui", key, str(value))
                 with open(self.settings_ini, "w") as fh:
                     cp.write(fh)
             except OSError:

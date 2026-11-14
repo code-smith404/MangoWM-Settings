@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.2.0 — category icons, settings search, reset buttons, UI fixes
+
+- **Icons for every category**: symbolic icon per page in the sidebar and in
+  the page header, resolved against the active icon theme (symbolic first,
+  plain name as fallback, neutral fallback if the theme has neither) so it
+  works with Adwaita, Papirus and others.
+- **Search now searches settings, not just page names** — typing filters the
+  sidebar to the pages containing matches *and* the current page to the
+  matching rows, with a "N of M settings match" hint. Esc clears it.
+- **Reset-to-default button on every setting** (↺). It deletes the key's
+  assignment lines from whichever file defined them, leaving comments,
+  blank lines and ordering untouched, so MangoWM falls back to its default.
+  Buttons are disabled for settings that are already at the default.
+- **Explicit vs default is visible**: settings present in your config are
+  bold with a "Set in <file> line N" tooltip; the rest are plain with a
+  "using MangoWM's default: X" tooltip.
+- **Unsaved-changes marker**: the Save button shows a bullet and the
+  suggested-action colour while changes are pending.
+- **Window geometry is remembered** (size plus sidebar width) in
+  `~/.config/mango-settings/settings.ini`.
+- **Fixed a layout bug** where the sidebar was allocated at a negative x
+  (clipping the left edge) because `GtkPaned` was positioned narrower than
+  the sidebar's minimum width. The paned position is now clamped to the
+  sidebar's real minimum.
+- 11 new unit tests (67 total).
+
 ## 2.1.0 — title-bar-free UI, background changer, real MangoWM keys
 
 - **No title bar**: the header bar is gone. Page search, app theme and the

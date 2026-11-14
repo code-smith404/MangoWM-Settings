@@ -6,15 +6,21 @@ Python file, GTK 3, no bloat.
 
 ## Features
 
-- **Sidebar navigation** with 15 pages: Appearance, Animations, Window
-  behavior, Layouts, Keybindings, Workspaces, Window rules, Monitors, Input
-  devices, Startup apps, Theming, Background, Notifications, Config files,
-  System info
+- **Sidebar navigation** with 15 icon-labelled pages: Appearance, Animations,
+  Window behavior, Layouts, Keybindings, Workspaces, Window rules, Monitors,
+  Input devices, Startup apps, Theming, Background, Notifications, Config
+  files, System info
 - **Chromeless window** — no title bar; search, theme and the
-  Save / Reload Mango / Quit controls live in the sidebar
+  Save / Reload Mango / Quit controls live in the sidebar; size and sidebar
+  width are remembered
 - **Dark / light / system theme** for the app itself
 - **Background page**: set the wallpaper live (swaybg, swww or feh) and
   persist it by updating the wallpaper line in `autostart.sh`
+- **Search across settings** (`Ctrl+F`): filters the sidebar to pages that
+  contain matches and the page to the matching rows; `Esc` clears it
+- **Reset-to-default (↺) on every setting** — removes the key from whichever
+  file defined it; explicit settings are bold and show "Set in file line N",
+  the rest show MangoWM's default
 - **Live page search** (`Ctrl+F`) and shortcuts: `Ctrl+S` save, `Ctrl+R`
   reload MangoWM, `Ctrl+Q` quit
 - **Safe config engine** that reads `~/.config/mango/config.conf` exactly
