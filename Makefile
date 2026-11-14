@@ -1,37 +1,33 @@
-# Standard install for packagers:  make install PREFIX=/usr DESTDIR="$pkgdir"
-PREFIX  ?= /usr/local
+PREFIX ?= $(HOME)/.local
 DESTDIR ?=
-APP_ID  := io.github.code_smith404.MangoSettings
-PYTHON  ?= python3
+BIN_DIR = $(DESTDIR)$(PREFIX)/bin
+SHARE_DIR = $(DESTDIR)$(PREFIX)/share/mango-settings
+APP_DIR = $(DESTDIR)$(PREFIX)/share/applications
+ICON_DIR = $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
+DESKTOP_ID = io.github.code_smith404.MangoSettings
 
-SHARE   := $(DESTDIR)$(PREFIX)/share
+.PHONY: all install uninstall test check-versions clean
 
-.PHONY: all install uninstall test lint check-versions
-
-all:
-	@echo "Nothing to build. Run 'make install' (PREFIX=$(PREFIX))."
+all: test
 
 install:
-	install -Dm755 mango-settings.py "$(SHARE)/mango-settings/mango-settings.py"
-	install -dm755 "$(DESTDIR)$(PREFIX)/bin"
-	ln -sf ../share/mango-settings/mango-settings.py "$(DESTDIR)$(PREFIX)/bin/mango-settings"
-	install -Dm644 data/$(APP_ID).desktop "$(SHARE)/applications/$(APP_ID).desktop"
-	install -Dm644 data/$(APP_ID).svg "$(SHARE)/icons/hicolor/scalable/apps/$(APP_ID).svg"
-	install -Dm644 README.md "$(SHARE)/doc/mango-settings/README.md"
-	install -Dm644 LICENSE "$(SHARE)/licenses/mango-settings/LICENSE"
+	install -d "$(BIN_DIR)" "$(SHARE_DIR)" "$(APP_DIR)" "$(ICON_DIR)"
+	install -m 755 mango-settings.py "$(SHARE_DIR)/mango-settings.py"
+	printf '#!/bin/sh\nexec python3 "%s/mango-settings.py" "$$@"\n' "$(PREFIX)/share/mango-settings" > "$(BIN_DIR)/mango-settings"
+	chmod +x "$(BIN_DIR)/mango-settings"
+	install -m 644 data/$(DESKTOP_ID).desktop "$(APP_DIR)/"
+	install -m 644 data/$(DESKTOP_ID).svg "$(ICON_DIR)/"
 
 uninstall:
-	rm -f "$(DESTDIR)$(PREFIX)/bin/mango-settings"
-	rm -rf "$(SHARE)/mango-settings" "$(SHARE)/doc/mango-settings" "$(SHARE)/licenses/mango-settings"
-	rm -f "$(SHARE)/applications/$(APP_ID).desktop"
-	rm -f "$(SHARE)/icons/hicolor/scalable/apps/$(APP_ID).svg"
+	rm -f "$(BIN_DIR)/mango-settings" "$(APP_DIR)/$(DESKTOP_ID).desktop"
+	rm -f "$(ICON_DIR)/$(DESKTOP_ID).svg"
+	rm -rf "$(SHARE_DIR)"
 
 test:
-	$(PYTHON) -m unittest discover -v tests
-
-lint:
-	$(PYTHON) -m pyflakes mango-settings.py tests
-	shellcheck -s sh install.sh tests/distro-test.sh tests/check-versions.sh
+	python3 -m unittest discover -s tests -v
 
 check-versions:
 	sh tests/check-versions.sh
+
+clean:
+	rm -rf __pycache__ tests/__pycache__

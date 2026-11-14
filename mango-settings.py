@@ -1,2656 +1,1954 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2026 Harikesh Verma (code-smith404)
-"""Mango Settings — a GNOME-Settings-style settings manager for MangoWM.
+# -*- coding: utf-8 -*-
+"""
+Mango Settings (MangoWM-Settings) — a graphical settings manager for MangoWM.
 
-Single-file GTK 3 / PyGObject application. It reads your MangoWM config the
-same way the compositor does (following ``source=`` includes, last value
-wins) and writes changes back in place, preserving comments, symlinks and
-file permissions.
+Single-file GTK 3 + PyGObject application.  The config engine at the top of
+this file is pure Python (no GTK imports) so it can be unit-tested headless.
+
+  mango-settings [--page PAGE] [--config FILE] [--check] [--list-pages] [--version]
+
+MIT licensed.  https://github.com/code-smith404/MangoWM-Settings
 """
 
-from __future__ import annotations
-
 import argparse
-import errno
-import json
+import datetime
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
-import time
-from collections import namedtuple
 
-__version__ = "1.1.1"
+VERSION = "2.0.0"
 APP_ID = "io.github.code_smith404.MangoSettings"
-REPO_URL = "https://github.com/code-smith404/MangoWM-Settings"
-DOCS_URL = "https://github.com/mangowm/mango/tree/main/docs"
+APP_NAME = "Mango Settings"
 
-HOME = os.path.expanduser("~")
-MANGO_DIR = os.path.join(HOME, ".config", "mango")
-SYSTEM_CONFIGS = (
-    "/etc/mango/config.conf",
-    "/usr/local/etc/mango/config.conf",
-    "/usr/etc/mango/config.conf",                    # openSUSE vendor configs
-    "/run/current-system/sw/etc/mango/config.conf",  # NixOS
-    "/usr/share/mango/config.conf",
-    "/usr/share/doc/mango/config.conf",
-)
+DEFAULT_CONFIG_PATH = "~/.config/mango/config.conf"
+DEFAULT_BIND_PATH = "~/.config/mango/bind.conf"
+DEFAULT_RULE_PATH = "~/.config/mango/rule.conf"
+DEFAULT_MONITOR_PATH = "~/.config/mango/monitor.conf"
 
+CACHE_ROOT = "~/.cache/mango-settings"
+BACKUP_ROOT = os.path.join(CACHE_ROOT, "backups")
+APP_SETTINGS_FILE = os.path.join("~/.config", "mango-settings", "settings.ini")
 
-def system_default_config():
-    """Find MangoWM's sample config, wherever the distro package put it."""
-    candidates = list(SYSTEM_CONFIGS)
-    binary = shutil.which("mango")
-    if binary:  # <prefix>/bin/mango -> <prefix>/etc/mango (Nix store, /opt, custom prefixes)
-        prefix = os.path.dirname(os.path.dirname(os.path.realpath(binary)))
-        candidates.insert(0, os.path.join(prefix, "etc", "mango", "config.conf"))
-    return next((p for p in candidates if os.path.isfile(p)), None)
-SESSION_STAMP = time.strftime("%Y%m%d-%H%M%S")
+MAX_INCLUDE_DEPTH = 32
+MAX_VALUE_LENGTH = 255          # MangoWM refuses longer values
+CHOICE_ANIMATIONS = ["none", "fade", "slide", "zoom"]
+CHOICE_LAYOUTS = ["tile", "scroller", "dwindle", "circle"]
 
 
 # ---------------------------------------------------------------------------
-# Settings schema
-#
-# Every key, default and range below was checked against MangoWM's parser
-# (src/config/option_defs.c). Item format:
-#   (key, label, kind, default, options)
-# kinds: bool | int (lo, hi, step) | float (lo, hi, step, digits)
-#        | choice [values] | string | cursor
-# A default of None means "unset" — MangoWM picks its own behaviour.
+# Errors and issues
 # ---------------------------------------------------------------------------
 
-ANIM_TYPES = ["slide", "zoom", "fade", "none"]
+class ConfigError(Exception):
+    """Raised for anything the user must be told about in actionable words."""
 
-CONFIG_SCHEMA = {
-    "Appearance": [
-        ("Gaps", None, [
-            ("gap_inner_horizontal", "Inner gap (horizontal)", "int", 5, (0, 1000, 1)),
-            ("gap_inner_vertical", "Inner gap (vertical)", "int", 5, (0, 1000, 1)),
-            ("gap_outer_horizontal", "Outer gap (horizontal)", "int", 10, (0, 1000, 1)),
-            ("gap_outer_vertical", "Outer gap (vertical)", "int", 10, (0, 1000, 1)),
-        ]),
-        ("Windows", None, [
-            ("border_radius", "Corner radius", "int", 0, (0, 100, 1)),
-            ("focused_opacity", "Focused window opacity", "float", 1.0, (0.0, 1.0, 0.05, 2)),
-            ("unfocused_opacity", "Unfocused window opacity", "float", 1.0, (0.0, 1.0, 0.05, 2)),
-        ]),
-        ("Borders", None, [
-            ("border_px", "Border width", "int", 4, (0, 50, 1)),
-            ("focus_color", "Focused border color (0xRRGGBBAA)", "string", "0xc66b25ff", None),
-            ("border_color", "Unfocused border color (0xRRGGBBAA)", "string", "0x444444ff", None),
-        ]),
-        ("Blur", None, [
-            ("blur", "Blur behind transparent windows", "bool", 0, None),
-            ("blur_layer", "Blur behind bars and launchers", "bool", 0, None),
-        ]),
-        ("Shadows", None, [
-            ("shadows", "Shadows", "bool", 0, None),
-            ("shadows_size", "Shadow size", "int", 10, (0, 100, 1)),
-            ("shadows_blur", "Shadow blur", "int", 15, (0, 100, 1)),
-        ]),
-    ],
-    "Animations": [
-        ("General", None, [
-            ("animations", "Window animations", "bool", 1, None),
-            ("layer_animations", "Layer-shell animations (bars, launchers)", "bool", 0, None),
-        ]),
-        ("Style", None, [
-            ("animation_type_open", "Open animation", "choice", None, ANIM_TYPES),
-            ("animation_type_close", "Close animation", "choice", None, ANIM_TYPES),
-            ("animation_fade_in", "Fade in", "bool", 1, None),
-            ("animation_fade_out", "Fade out", "bool", 1, None),
-        ]),
-        ("Durations (ms)", None, [
-            ("animation_duration_open", "Open", "int", 400, (0, 5000, 10)),
-            ("animation_duration_close", "Close", "int", 300, (0, 5000, 10)),
-            ("animation_duration_move", "Move", "int", 500, (0, 5000, 10)),
-            ("animation_duration_tag", "Tag switch", "int", 300, (0, 5000, 10)),
-        ]),
-    ],
-    "Window behavior": [
-        ("Focus", None, [
-            ("sloppy_focus", "Focus follows mouse", "bool", 1, None),
-            ("focus_on_activate", "Focus windows that request activation", "bool", 1, None),
-            ("warp_cursor", "Warp cursor to focused window", "bool", 1, None),
-            ("focus_cross_monitor", "Directional focus crosses monitors", "bool", 0, None),
-        ]),
-        ("Tiling and floating", None, [
-            ("new_is_master", "New window becomes master", "bool", 1, None),
-            ("drag_tile_to_tile", "Drag tiled windows onto other tiles", "bool", 1, None),
-            ("enable_floating_snap", "Snap floating windows to edges", "bool", 0, None),
-            ("snap_distance", "Snap distance (px)", "int", 30, (0, 500, 1)),
-        ]),
-        ("Borders and gaps", None, [
-            ("smart_gaps", "Smart gaps (no gaps with a single window)", "bool", 0, None),
-            ("no_border_when_single", "No border with a single window", "bool", 0, None),
-        ]),
-        ("Configuration", None, [
-            ("auto_reload_config", "Reload MangoWM automatically when config files change", "bool", 1, None),
-        ]),
-    ],
-    "Layouts": [
-        ("Master-stack", None, [
-            ("default_master_factor", "Master area width", "float", 0.55, (0.05, 0.95, 0.05, 2)),
-            ("default_master_count", "Windows in master area", "int", 1, (1, 20, 1)),
-        ]),
-        ("Scroller", None, [
-            ("scroller_default_proportion", "Default column width", "float", 0.9, (0.1, 1.0, 0.05, 2)),
-            ("scroller_focus_center", "Keep focused column centered", "bool", 0, None),
-        ]),
-        ("Dwindle", None, [
-            ("dwindle_smart_split", "Smart split", "bool", 0, None),
-            ("dwindle_preserve_split", "Preserve split ratio", "bool", 0, None),
-        ]),
-        ("Cycling", "Comma-separated, e.g. tile,scroller,grid,deck,monocle,center_tile", [
-            ("circle_layout", "Layouts to cycle through", "string", "", None),
-        ]),
-    ],
-    "Input devices": [
-        ("Keyboard", None, [
-            ("repeat_rate", "Key repeat rate (per second)", "int", 25, (1, 1000, 1)),
-            ("repeat_delay", "Key repeat delay (ms)", "int", 600, (1, 20000, 10)),
-            ("numlock_on", "Num Lock on at startup", "bool", 0, None),
-            ("xkb_rules_layout", "Keyboard layouts (e.g. us,de)", "string", "", None),
-        ]),
-        ("Cursor", None, [
-            ("cursor_theme", "Cursor theme", "cursor", "", None),
-            ("cursor_size", "Cursor size", "int", 24, (4, 512, 1)),
-        ]),
-        ("Trackpad", "Some trackpad and mouse options apply after logging in again.", [
-            ("disable_trackpad", "Disable trackpad", "bool", 0, None),
-            ("tap_to_click", "Tap to click", "bool", 1, None),
-            ("tap_and_drag", "Tap and drag", "bool", 1, None),
-            ("drag_lock", "Drag lock", "bool", 1, None),
-            ("trackpad_natural_scrolling", "Natural scrolling", "bool", 0, None),
-            ("trackpad_disable_while_typing", "Disable while typing", "bool", 1, None),
-        ]),
-        ("Mouse", None, [
-            ("mouse_natural_scrolling", "Natural scrolling", "bool", 0, None),
-            ("mouse_accel_speed", "Pointer acceleration", "float", 0.0, (-1.0, 1.0, 0.05, 2)),
-        ]),
-    ],
+
+class Issue(object):
+    """A problem found while loading the config (shown by --check and GUI)."""
+
+    ERROR = "error"
+    WARNING = "warning"
+
+    __slots__ = ("severity", "path", "lineno", "message")
+
+    def __init__(self, severity, message, path=None, lineno=None):
+        self.severity = severity
+        self.message = message
+        self.path = path
+        self.lineno = lineno
+
+    def __str__(self):
+        where = ""
+        if self.path is not None:
+            where = self.path
+            if self.lineno is not None:
+                where += ":%d" % self.lineno
+        return "%s: %s%s: %s" % (
+            "error" if self.severity == Issue.ERROR else "warning",
+            " (%s)" % where if where else "",
+            "",  # kept for layout symmetry
+            self.message,
+        ).replace("  ", " ").replace(": :", ": ") if False else "%s%s%s: %s" % (
+            "error" if self.severity == Issue.ERROR else "warning",
+            " [%s]" % where if where else "",
+            "", self.message,
+        )
+
+
+def _add_issue(issues, severity, message, path=None, lineno=None):
+    issues.append(Issue(severity, message, path, lineno))
+
+
+# ---------------------------------------------------------------------------
+# Line model — every line of a config file is one of these, so comments,
+# blank lines, ordering and unknown content survive a load/save round trip.
+# ---------------------------------------------------------------------------
+
+def _split_inline_comment(text):
+    """Split ``key = value  # comment`` into (body, comment).  ``#`` inside
+    double or single quotes does not start a comment."""
+    in_single = in_double = False
+    for i, ch in enumerate(text):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return text[:i], text[i:]
+    return text, ""
+
+
+def _strip_quotes(token):
+    token = token.strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+class Line(object):
+    raw = ""
+    dirty = False
+
+    def render(self):
+        return self.raw
+
+    def is_editable(self):
+        return False
+
+
+class BlankLine(Line):
+    pass
+
+
+class CommentLine(Line):
+    pass
+
+
+class UnknownLine(Line):
+    """A line we do not understand.  It is kept verbatim so a save never
+    deletes content the app did not recognise."""
+
+
+class VarLine(Line):
+    """``var = NAME value`` (also accepted: ``var = NAME=value``)."""
+
+    def __init__(self, name, value, comment=""):
+        self.name = name
+        self.value = value
+        self.comment = comment
+
+    def render(self):
+        out = "var = %s %s" % (self.name, self.value)
+        if self.comment:
+            out += "  " + self.comment
+        return out
+
+    def is_editable(self):
+        return True
+
+
+class OptionLine(Line):
+    """``key = value`` — the bread and butter of config.conf."""
+
+    def __init__(self, key, value, comment=""):
+        self.key = key
+        self.value = value
+        self.comment = comment
+        self.dirty = False
+
+    def render(self):
+        out = "%s = %s" % (self.key, self.value)
+        if self.comment:
+            out += "  " + self.comment
+        return out
+
+    def set_value(self, value):
+        self.value = value
+        self.dirty = True
+
+    def is_editable(self):
+        return True
+
+
+class IncludeLine(Line):
+    """``source = PATH`` / ``source_optional = PATH``."""
+
+    def __init__(self, target, optional, comment=""):
+        self.target = target
+        self.optional = optional
+        self.comment = comment
+
+    def render(self):
+        out = "%s = %s" % ("source_optional" if self.optional else "source", self.target)
+        if self.comment:
+            out += "  " + self.comment
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Parsing one file
+# ---------------------------------------------------------------------------
+
+_VAR_RE = re.compile(r"^var\s*=\s*([A-Za-z_][A-Za-z0-9_]*)[=\s](.*)$")
+_OPT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+
+
+def parse_lines(text, path=None, issues=None):
+    """Parse the text of one config file into Line objects."""
+    lines = []
+    pieces = text.split("\n")
+    if text.endswith("\n"):
+        pieces.pop()          # the final newline is not a blank line
+    for lineno, raw in enumerate(pieces, start=1):
+        raw = raw.rstrip("\r")
+        stripped = raw.strip()
+        if not stripped:
+            lines.append(BlankLine()); lines[-1].raw = raw
+            continue
+        if stripped.startswith("#"):
+            c = CommentLine(); c.raw = raw; lines.append(c); continue
+        body, comment = _split_inline_comment(stripped)
+        body = body.strip()
+        m = _VAR_RE.match(body)
+        if m:
+            name, value = m.group(1), m.group(2).strip()
+            if value.startswith("="):
+                value = value[1:].strip()
+            lines.append(VarLine(name, value, comment))
+            continue
+        if body.startswith("source_optional"):
+            m2 = re.match(r"^source_optional\s*=\s*(.*)$", body)
+            if m2:
+                lines.append(IncludeLine(_strip_quotes(m2.group(1)), True, comment))
+                continue
+        if body.startswith("source"):
+            m2 = re.match(r"^source\s*=\s*(.*)$", body)
+            if m2:
+                lines.append(IncludeLine(_strip_quotes(m2.group(1)), False, comment))
+                continue
+        m = _OPT_RE.match(body)
+        if m:
+            value = _strip_quotes(m.group(2))
+            lines.append(OptionLine(m.group(1), value, comment))
+            continue
+        # Unknown syntax: keep verbatim, warn once per file by caller.
+        u = UnknownLine(); u.raw = raw
+        lines.append(u)
+        if issues is not None and stripped:
+            _add_issue(issues, Issue.WARNING,
+                       "unrecognised line kept verbatim: %r" % stripped[:60],
+                       path, lineno)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Document — one file on disk
+# ---------------------------------------------------------------------------
+
+class Document(object):
+    """A loaded config file plus everything needed to write it back
+    byte-faithfully when untouched and safely when edited."""
+
+    def __init__(self, path):
+        self.path = os.path.abspath(os.path.expanduser(path))
+        self.real = os.path.realpath(self.path)
+        self.lines = []
+        self.dirty = False
+        self.newline = "\n"
+        self.final_newline = True
+        self.decoded = True
+        self.mtime_ns = None
+        self.size = None
+
+    # -- loading -----------------------------------------------------------
+    def load(self):
+        st = os.stat(self.real)
+        self.mtime_ns, self.size = st.st_mtime_ns, st.st_size
+        with open(self.real, "rb") as fh:
+            data = fh.read()
+        # surrogateescape makes the utf-8 decode lossless for any byte stream,
+        # so a save round-trips non-UTF-8 files byte-for-byte.
+        text = data.decode("utf-8", errors="surrogateescape")
+        self.decoded = True
+        self.newline = "\r\n" if "\r\n" in text else "\n"
+        self.final_newline = text.endswith("\n") or text == ""
+        body = text[:-len(self.newline)] if (self.final_newline and text) else text
+        self.lines = parse_lines(body, self.path)
+        return self
+
+    # -- rendering ----------------------------------------------------------
+    def render_text(self):
+        body = self.newline.join(line.render() for line in self.lines)
+        text = body + self.newline if self.final_newline else body
+        if not self.lines:
+            text = "" if self.final_newline is False and self.size == 0 else text
+        return text
+
+    # -- helpers ------------------------------------------------------------
+    def options(self):
+        return [l for l in self.lines if isinstance(l, OptionLine)]
+
+    def append(self, line):
+        # keep the file tidy: no two trailing blanks
+        if self.lines and isinstance(self.lines[-1], BlankLine):
+            self.lines.insert(len(self.lines) - 1, line)
+        else:
+            if self.lines and not self.final_newline:
+                self.final_newline = True  # we are adding content after old EOF
+            self.lines.append(line)
+        self.dirty = True
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+class OptDef(object):
+    """Definition of one MangoWM option: type, default, range, choices."""
+
+    BOOL, INT, FLOAT, CHOICE, STRING, COLOR, CURSOR = (
+        "bool", "int", "float", "choice", "string", "color", "cursor")
+
+    def __init__(self, key, label, type_, default, min_=None, max_=None,
+                 choices=None, desc="", multi=False):
+        self.key = key
+        self.label = label
+        self.type = type_
+        self.default = default
+        self.min = min_
+        self.max = max_
+        self.choices = list(choices) if choices else None
+        self.desc = desc
+        self.multi = multi            # keys that may repeat: exec, exec_once
+
+    def validate(self, value):
+        """Return (ok, error-message).  value is a str as it appears on disk."""
+        if "\n" in value or "\r" in value:
+            return False, "newlines are not allowed (MangoWM cannot parse them)"
+        if len(value) > MAX_VALUE_LENGTH:
+            return False, "value longer than %d characters (MangoWM refuses it)" % MAX_VALUE_LENGTH
+        if self.type == OptDef.BOOL:
+            if value not in ("0", "1"):
+                return False, "boolean options must be 0 or 1, got %r" % value
+            return True, ""
+        if self.type == OptDef.INT:
+            if not re.match(r"^-?\d+$", value.strip()):
+                return False, "expected an integer, got %r" % value
+            n = int(value)
+            if self.min is not None and n < self.min:
+                return False, "value %d is below the minimum %d" % (n, self.min)
+            if self.max is not None and n > self.max:
+                return False, "value %d is above the maximum %d" % (n, self.max)
+            return True, ""
+        if self.type == OptDef.FLOAT:
+            if not re.match(r"^-?\d+(\.\d+)?$", value.strip()):
+                return False, "expected a number, got %r" % value
+            f = float(value)
+            if self.min is not None and f < self.min:
+                return False, "value %s is below the minimum %s" % (value, self.min)
+            if self.max is not None and f > self.max:
+                return False, "value %s is above the maximum %s" % (value, self.max)
+            return True, ""
+        if self.type == OptDef.CHOICE:
+            if value not in (self.choices or []):
+                return False, "must be one of: %s (got %r)" % (
+                    ", ".join(self.choices or []), value)
+            return True, ""
+        # STRING / COLOR / CURSOR — loosely validated
+        if self.type == OptDef.COLOR and value and not re.match(
+                r"^0x[0-9a-fA-F]{6,8}$|^#[0-9a-fA-F]{6,8}$|"
+                r"^rgb\([0-9a-fA-F]{6,8}\)$", value):
+            return False, ("colour must look like 0xRRGGBB[AA], #RRGGBB[AA] "
+                           "or rgb(RRGGBB[AA]) — got %r" % value)
+        return True, ""
+
+
+PAGE_ORDER = [
+    "appearance", "animations", "behavior", "layouts", "keybindings",
+    "workspaces", "windowrules", "monitors", "input", "startup",
+    "theming", "notifications", "files", "system",
+]
+
+PAGE_TITLES = {
+    "appearance": "Appearance",
+    "animations": "Animations",
+    "behavior": "Window behavior",
+    "layouts": "Layouts",
+    "keybindings": "Keybindings",
+    "workspaces": "Workspaces",
+    "windowrules": "Window rules",
+    "monitors": "Monitors",
+    "input": "Input devices",
+    "startup": "Startup apps",
+    "theming": "Theming",
+    "notifications": "Notifications",
+    "files": "Config files",
+    "system": "System info",
 }
 
 
+def build_schema():
+    """The MangoWM option database the UI is generated from."""
+    P = OptDef
+    appearance = [
+        P("gaps_in", "Gaps inner", P.INT, "8", 0, 500, desc="Pixels between tiled windows"),
+        P("gaps_out", "Gaps outer", P.INT, "16", 0, 500, desc="Pixels between windows and screen edge"),
+        P("border_width", "Border width", P.INT, "2", 0, 100),
+        P("corner_radius", "Corner radius", P.INT, "12", 0, 100),
+        P("col_active_border", "Active border colour", P.COLOR, "0xff66ccff"),
+        P("col_inactive_border", "Inactive border colour", P.COLOR, "0xff333333"),
+        P("shadow_enabled", "Shadows", P.BOOL, "1"),
+        P("blur_enabled", "Blur", P.BOOL, "1"),
+    ]
+    animations = [
+        P("animation", "Animations", P.BOOL, "1", desc="Master switch for animations"),
+        P("open_animation", "Open animation", P.CHOICE, "fade", choices=CHOICE_ANIMATIONS),
+        P("close_animation", "Close animation", P.CHOICE, "fade", choices=CHOICE_ANIMATIONS),
+        P("open_duration", "Open duration (s)", P.FLOAT, "0.2", 0.0, 5.0),
+        P("close_duration", "Close duration (s)", P.FLOAT, "0.2", 0.0, 5.0),
+        P("fade_duration", "Fade duration (s)", P.FLOAT, "0.1", 0.01, 5.0),
+    ]
+    behavior = [
+        P("sloppy_focus", "Sloppy focus", P.BOOL, "1", desc="Focus follows the mouse"),
+        P("cursor_warp", "Cursor warp", P.BOOL, "0", desc="Warp cursor to focused window"),
+        P("smart_gaps", "Smart gaps", P.BOOL, "0", desc="No gaps when only one window"),
+        P("snap_distance", "Floating snap distance", P.INT, "10", 0, 200),
+        P("auto_reload", "Auto reload", P.BOOL, "1", desc="Reload MangoWM when the config changes"),
+    ]
+    layouts = [
+        P("layout", "Default layout", P.CHOICE, "tile", choices=CHOICE_LAYOUTS),
+        P("master_factor", "Master factor", P.FLOAT, "0.55", 0.1, 0.9),
+        P("master_count", "Master count", P.INT, "1", 1, 10),
+        P("new_is_master", "New window becomes master", P.BOOL, "0"),
+        P("scroller_mod", "Scroller modifier", P.STRING, ""),
+        P("scroller_wrap", "Scroller wrap", P.CHOICE, "none", choices=["none", "nextscreen"]),
+    ]
+    input_ = [
+        P("cursor_theme", "Cursor theme", P.CURSOR, "", desc="Empty = system default"),
+        P("cursor_size", "Cursor size", P.INT, "24", 8, 256),
+        P("disable_trackpad", "Disable trackpad", P.BOOL, "0"),
+        P("kb_repeat_delay", "Key repeat delay (ms)", P.INT, "300", 100, 2000),
+        P("kb_repeat_rate", "Key repeat rate (Hz)", P.INT, "25", 1, 100),
+    ]
+    return {
+        "appearance": appearance,
+        "animations": animations,
+        "behavior": behavior,
+        "layouts": layouts,
+        "input": input_,
+        # These pages are list-editors over other files; empty option lists.
+        "keybindings": [], "workspaces": [], "windowrules": [],
+        "monitors": [], "startup": [], "theming": [],
+        "notifications": [], "files": [], "system": [],
+    }
+
+
+SCHEMA = build_schema()
+SCHEMA_OPTIONS = {}
+for _opts in SCHEMA.values():
+    for _o in _opts:
+        SCHEMA_OPTIONS[_o.key] = _o
+
+MULTI_KEYS = {"exec", "exec_once"}          # may appear many times in config.conf
+# Options handled on other pages / by other files — hidden from Appearance etc.
+HIDDEN_OPTION_KEYS = {"exec", "exec_once"}
+
+
 # ---------------------------------------------------------------------------
-# Config file handling (no GTK needed — this part is unit-testable)
+# MangoConfig — the full config graph (root file + includes)
 # ---------------------------------------------------------------------------
 
-Entry = namedtuple("Entry", "path idx key value raw")
-Entry.__doc__ = """One ``key=value`` assignment in parse order.
+class MangoConfig(object):
+    """Loads ~/.config/mango/config.conf exactly like MangoWM does:
 
-``value`` is what MangoWM sees (quotes stripped, ``$variables`` expanded);
-``raw`` is the unexpanded value as written in the file."""
-
-Problem = namedtuple("Problem", "kind path origin message")
-Problem.__doc__ = """Something that makes MangoWM load the config differently than
-expected. ``kind`` is one of: missing, unreadable, cycle, depth, toml.
-``origin`` is ``(path, line_index)`` of the ``source=`` line, or None."""
-
-# MangoWM recurses into includes with no limit (a cycle crashes it). We stop
-# well before that; real configs are a handful of levels deep.
-MAX_INCLUDE_DEPTH = 32
-# MangoWM reads lines with fgets(line, 512) and scanf("%255[^=]=%255[^\n]").
-MAX_KEY_LEN = 255
-MAX_VALUE_LEN = 255
-C_SPACE = " \t\n\v\f\r"  # C isspace() in the "C" locale
-
-
-class ConfigError(OSError):
-    """A config file couldn't be written safely; ``strerror`` says why."""
-
-    def __init__(self, message: str, filename: str | None = None):
-        super().__init__(errno.EIO, message, filename)
-
-
-def describe_error(err: BaseException) -> str:
-    """Turn an exception from a config read/write into a message users can act on."""
-    if not isinstance(err, OSError):
-        return str(err)
-    name = err.filename or "the file"
-    if isinstance(err, ConfigError):
-        return err.strerror
-    if isinstance(err, PermissionError):
-        return ("permission denied for %s. Check that you own it "
-                "(ls -l %s)." % (name, name))
-    if err.errno == errno.EROFS:
-        return "%s is on a read-only file system." % name
-    if err.errno == errno.ENOSPC:
-        return "no space left on the device holding %s." % name
-    msg = err.strerror or str(err)
-    return "%s (%s)" % (msg, err.filename) if err.filename else msg
-
-
-def read_raw(path: str) -> tuple[list[str], str, bool]:
-    """Read *path* as (lines, newline, ends_with_newline).
-
-    Lines are split on ``\\n`` only, like fgets() in MangoWM (str.splitlines()
-    would also split on form feeds and Unicode separators). Undecodable bytes
-    survive a read/write round trip thanks to ``surrogateescape``. A missing
-    file reads as empty; other errors (e.g. permission denied) are raised.
+    * ``source=`` / ``source_optional=`` includes, resolved relative to the
+      including file, with ``~/`` and ``$var`` expansion;
+    * repeated includes are read again (MangoWM re-reads them; last
+      assignment wins);
+    * cycles and depth > MAX_INCLUDE_DEPTH are reported, never followed;
+    * variables (``var = NAME value``) are global in include order.
     """
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read()
-    except (FileNotFoundError, NotADirectoryError):
-        return [], "\n", True
-    text = data.decode("utf-8", errors="surrogateescape")
-    if not text:
-        return [], "\n", True
-    newline = "\r\n" if "\r\n" in text.split("\n", 1)[0] + "\n" else "\n"
-    final = text.endswith("\n")
-    lines = text.split("\n")
-    if final:
-        lines.pop()
-    if newline == "\r\n":
-        lines = [l[:-1] if l.endswith("\r") else l for l in lines]
-    return lines, newline, final
 
+    def __init__(self, root=None, schema=None, confirm_external=None):
+        self.root_path = os.path.abspath(os.path.expanduser(root or DEFAULT_CONFIG_PATH))
+        self.schema = schema or SCHEMA
+        self.schema_by_key = dict((o.key, o) for opts in self.schema.values() for o in opts)
+        self.confirm_external = confirm_external  # callable([Document]) -> bool
+        self.docs = {}            # realpath -> Document (first-seen order)
+        self.order = []           # realpaths in include traversal order
+        self.issues = []
+        self.vars = {}            # NAME -> value, include order
+        self.values = {}          # key -> [(doc, line)] last entry wins
+        self.exists = False
+        self._loaded_stats = {}   # realpath -> (mtime_ns, size)
+        self._backed_up = set()
+        self.backup_root = os.path.expanduser(BACKUP_ROOT)
 
-def read_lines(path: str) -> list[str]:
-    """Lines of *path* without line endings ([] if it doesn't exist)."""
-    return read_raw(path)[0]
+    # -- loading ------------------------------------------------------------
+    def load(self):
+        self.docs, self.order, self.issues = {}, [], []
+        self.vars, self.values = {}, {}
+        self._loaded_stats = {}
+        if not os.path.exists(self.root_path):
+            self.exists = False
+            _add_issue(self.issues, Issue.WARNING,
+                       "config file not found: %s (MangoWM will use its built-in defaults)" % self.root_path)
+            return self
+        self.exists = True
+        self._load_file(self.root_path, depth=0, stack=[], mandatory=True)
+        return self
 
+    def _read_doc(self, path):
+        doc = Document(path)
+        if doc.real in self.docs:
+            return self.docs[doc.real]
+        try:
+            doc.load()
+        except OSError as exc:
+            _add_issue(self.issues, Issue.ERROR,
+                       "cannot read config file: %s" % exc.strerror or str(exc), doc.path)
+            return None
+        self.docs[doc.real] = doc
+        return doc
 
-def file_stamp(path: str):
-    """(mtime_ns, size) of *path*, or None. Used to detect external edits."""
-    try:
-        st = os.stat(path)
-        return (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return None
+    def _load_file(self, path, depth, stack, mandatory):
+        real = os.path.realpath(os.path.expanduser(path))
+        if real in stack:
+            chain = " -> ".join(stack[stack.index(real):] + [real])
+            _add_issue(self.issues, Issue.ERROR,
+                       "include cycle detected: %s" % chain, path)
+            return None
+        if depth > MAX_INCLUDE_DEPTH:
+            _add_issue(self.issues, Issue.ERROR,
+                       "include depth exceeds %d (stuck include loop?)" % MAX_INCLUDE_DEPTH, path)
+            return None
+        doc = self._read_doc(path)
+        if doc is None:
+            if mandatory:
+                _add_issue(self.issues, Issue.ERROR, "missing mandatory include", path)
+            return None
+        self.order.append(doc.real)
+        self._loaded_stats.setdefault(doc.real, (doc.mtime_ns, doc.size))
+        stack = stack + [real]
+        # Walk the file sequentially: vars defined before an include line are
+        # visible to it, exactly like MangoWM.
+        for line in doc.lines:
+            if isinstance(line, VarLine):
+                self.vars[line.name] = line.value
+            elif isinstance(line, IncludeLine):
+                self._walk_include(doc, line, depth, stack)
+            elif isinstance(line, OptionLine):
+                expanded = self._expand_vars(line.value)
+                self.values.setdefault(line.key, []).append((doc, line, expanded))
+        return doc
 
+    def _expand_vars(self, token):
+        def sub(match):
+            return self.vars.get(match.group(1), match.group(0))
+        return re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", sub, token)
 
-_backed_up = set()
-
-
-def backup_dir() -> str:
-    """Folder that holds one sub-folder of backups per app session."""
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache")
-    return os.path.join(base, "mango-settings", "backups")
-
-
-def backup_once(real: str) -> str | None:
-    """Copy *real* to the session backup folder before its first change.
-
-    Returns the backup path (None if the file doesn't exist yet). Raises
-    ConfigError when the copy fails, so callers never overwrite a file that
-    has no backup.
-    """
-    if not os.path.isfile(real):
-        return None
-    dest = os.path.join(backup_dir(), SESSION_STAMP)
-    name = os.path.relpath(real, HOME) if real.startswith(HOME + os.sep) else real
-    # ".config/mango/x.conf" -> "config__mango__x.conf" (not a hidden file)
-    target = os.path.join(dest, name.strip(os.sep).replace(os.sep, "__").lstrip("."))
-    if real in _backed_up:
-        return target
-    try:
-        os.makedirs(dest, exist_ok=True)
-        shutil.copy2(real, target)
-    except OSError as err:
-        raise ConfigError("Not saved: couldn't back up %s to %s (%s)."
-                          % (real, dest, err.strerror or err), real) from err
-    _backed_up.add(real)
-    return target
-
-
-def write_text(path: str, text: str, executable: bool = False) -> None:
-    """Atomically replace the contents of *path* with *text*.
-
-    * follows symlinks, so dotfile managers (GNU Stow, chezmoi symlinks, …)
-      keep working: the link target is updated, the link stays;
-    * writes a temp file in the same folder, fsyncs it and renames it over
-      the old file, so an interrupted save leaves either the old or the new
-      file, never a truncated one;
-    * keeps the original permission bits (new files get 0666/0777 & ~umask);
-    * backs up the old file first and refuses to write if that fails.
-    """
-    real = os.path.realpath(path)
-    folder = os.path.dirname(real)
-    os.makedirs(folder, exist_ok=True)
-    if os.path.exists(real) and not os.access(real, os.W_OK):
-        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), real)
-    backup_once(real)
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".%s." % os.path.basename(real),
-                               suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(text.encode("utf-8", errors="surrogateescape"))
-            fh.flush()
-            os.fsync(fh.fileno())
-        if os.path.exists(real):
-            shutil.copymode(real, tmp)
+    def _walk_include(self, doc, line, depth, stack):
+        target = self._expand_vars(line.target.strip())
+        if target.startswith("~"):
+            target = os.path.expanduser(target)
+        if not os.path.isabs(target):
+            target = os.path.join(os.path.dirname(doc.real), target)
+        target = os.path.normpath(target)
+        if os.path.exists(target):
+            self._load_file(target, depth + 1, stack, mandatory=not line.optional)
+        elif line.optional:
+            _add_issue(self.issues, Issue.WARNING,
+                       "optional include not found (ignored): %s" % target, doc.path)
         else:
-            umask = os.umask(0)
-            os.umask(umask)
-            os.chmod(tmp, (0o777 if executable else 0o666) & ~umask)
-        os.replace(tmp, real)
-    except BaseException:
+            _add_issue(self.issues, Issue.ERROR,
+                       "mandatory include not found: %s" % target, doc.path, None)
+            _add_issue(self.issues, Issue.ERROR, "this is the line that includes it", doc.path,
+                       lineno=None)
+            line.comment = (line.comment + "  # MISSING: " + target).strip()
+
+    # -- reading values -------------------------------------------------------
+    def get(self, key, default=None):
+        """Last-wins value for key, or default.  $vars are already expanded."""
+        entries = self.values.get(key)
+        if not entries:
+            return default
+        return entries[-1][2]
+
+    def get_all(self, key):
+        return [entry[2] for entry in self.values.get(key, [])]
+
+    def has(self, key):
+        return bool(self.values.get(key))
+
+    def unknown_options(self):
+        return sorted(k for k in self.values if k not in self.schema_by_key)
+
+    # -- writing values -------------------------------------------------------
+    def set(self, key, value):
+        """Validate and set an option.  Creates the line in the root file if
+        it is not defined anywhere yet."""
+        if not isinstance(value, str):
+            raise ConfigError("value must be a string, got %r" % (value,))
+        opt = self.schema_by_key.get(key)
+        if opt is not None:
+            ok, err = opt.validate(value)
+            if not ok:
+                raise ConfigError("%s: %s" % (key, err))
+        if not self.exists:
+            raise ConfigError("no config file loaded (load() first, or create one)")
+        if key in MULTI_KEYS:
+            return self.add_value(key, value)
+        entries = self.values.get(key)
+        if entries:
+            doc, line = entries[-1][0], entries[-1][1]
+            line.set_value(value)
+            doc.dirty = True
+            self.values[key][-1] = (doc, line, value)
+        else:
+            root = self.docs[os.path.realpath(self.root_path)]
+            line = OptionLine(key, value)
+            root.append(line)
+            self.values[key] = [(root, line, value)]
+        return True
+
+    def add_value(self, key, value):
+        """Append another occurrence of a multi-value option (exec/exec_once)."""
+        opt = self.schema_by_key.get(key)
+        if opt is not None:
+            ok, err = opt.validate(value)
+            if not ok:
+                raise ConfigError("%s: %s" % (key, err))
+        if not self.exists:
+            raise ConfigError("no config file loaded")
+        root = self.docs[os.path.realpath(self.root_path)]
+        line = OptionLine(key, value)
+        root.append(line)
+        self.values.setdefault(key, []).append((root, line, value))
+
+    def remove_value(self, key, index=-1):
+        entries = self.values.get(key)
+        if not entries:
+            return False
+        doc, line = entries[index][0], entries[index][1]
+        doc.lines.remove(line)
+        doc.dirty = True
+        entries.pop(index if index != -1 else -1)
+        return True
+
+    def validate(self, key, value):
+        opt = self.schema_by_key.get(key)
+        if opt is None:
+            return True, ""
+        return opt.validate(value)
+
+    # -- saving ----------------------------------------------------------------
+    def changed_files(self):
+        return [self.docs[r] for r in self.order if self.docs[r].dirty]
+
+    def save(self):
+        """Atomically write every modified file, preserving permissions,
+        symlinks, CRLF and final-newline state.  Backs up files before the
+        first change of the session."""
+        dirty = self.changed_files()
+        if not dirty:
+            return []
+        self._backup(dirty)
+        externally_edited = [d for d in dirty if self._changed_on_disk(d)]
+        if externally_edited:
+            proceed = (self.confirm_external(externally_edited)
+                       if self.confirm_external else False)
+            if not proceed:
+                raise ConfigError(
+                    "save cancelled: %s changed outside Mango Settings" %
+                    ", ".join(d.path for d in externally_edited))
+        for doc in dirty:
+            self._write_doc(doc)
+        return dirty
+
+    def _changed_on_disk(self, doc):
         try:
-            os.unlink(tmp)
+            st = os.stat(doc.real)
         except OSError:
-            pass
-        raise
-    try:  # make the rename itself durable
-        dfd = os.open(folder, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-    except OSError:
-        pass
+            return True
+        return (st.st_mtime_ns, st.st_size) != self._loaded_stats.get(doc.real)
 
-
-def write_lines(path: str, lines: list[str]) -> None:
-    """Write *lines*, keeping the file's line endings (LF or CRLF)."""
-    _old, newline, final = read_raw(path)
-    text = newline.join(lines)
-    if final or not _old or not lines:
-        text += newline
-    write_text(path, text)
-
-
-def split_comment(line: str) -> tuple[str, str]:
-    """Split off an inline comment the way MangoWM does: a ``#`` that follows
-    whitespace and is not inside quotes. Returns (body, comment), where the
-    comment keeps the whitespace in front of it."""
-    quote = None
-    for i, ch in enumerate(line):
-        if quote is None:
-            if ch in "'\"":
-                quote = ch
-            elif ch == "#" and i > 0 and line[i - 1] in C_SPACE:
-                j = i
-                while j > 0 and line[j - 1] in C_SPACE:
-                    j -= 1
-                return line[:j], line[j:]
-        elif ch == quote:
-            quote = None
-    return line, ""
-
-
-def strip_quotes(value: str) -> str:
-    """Remove one pair of matching outer quotes and trim inside, like MangoWM."""
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1].strip(C_SPACE)
-    return value
-
-
-def split_line(line: str):
-    """Parse ``key=value`` → (key, value, comment, indent), or None.
-
-    Mirrors MangoWM's parse_config_line(): lines starting with ``#`` are
-    skipped, the inline comment is removed, and both ``key`` and ``value``
-    need at least one character (``key=`` alone is a parse error in MangoWM
-    and has no effect). Over-long keys/values are rejected the same way.
-    """
-    if not line or line[0] == "#":
-        return None
-    body, comment = split_comment(line)
-    # MangoWM cuts at the '#', keeping the whitespace before it.
-    processed = line[:len(line) - len(comment.lstrip(C_SPACE))] if comment else line
-    eq = processed.find("=")
-    if eq <= 0 or eq >= MAX_KEY_LEN + 1 or eq == len(processed) - 1:
-        return None
-    if len(processed) - eq - 1 > MAX_VALUE_LEN:
-        return None
-    key = processed[:eq].strip(C_SPACE)
-    if not key:
-        return None
-    indent = line[:len(line) - len(line.lstrip(C_SPACE))]
-    return key, strip_quotes(body[body.index("=") + 1:].strip(C_SPACE)), comment, indent
-
-
-def _quote_for(value: str, template_raw: str | None) -> str:
-    """Return *value* as it must be written so MangoWM reads it back unchanged."""
-    if "\n" in value or "\r" in value:
-        raise ValueError("values can't contain line breaks")
-    value = value.strip(C_SPACE)  # MangoWM trims values anyway
-    quote = None
-    if template_raw and len(template_raw) >= 2 and template_raw[0] == template_raw[-1] \
-            and template_raw[0] in "'\"":
-        quote = template_raw[0]  # keep the user's quoting style
-    if split_comment("x=" + value)[1] or (len(value) >= 2 and value[0] == value[-1]
-                                          and value[0] in "'\""):
-        quote = quote or "\""  # " #" would start a comment; outer quotes would be eaten
-    if quote and quote in value:
-        quote = "'" if quote == "\"" else "\""
-        if quote in value:
-            raise ValueError("values can't contain both ' and \" together with ' #'")
-    text = "%s%s%s" % (quote, value, quote) if quote else value
-    if len(text) > MAX_VALUE_LEN:
-        raise ValueError("MangoWM ignores values longer than %d characters" % MAX_VALUE_LEN)
-    return text
-
-
-def format_line(key: str, value: str, template: str | None = None) -> str:
-    """Build a config line, keeping indentation, quoting and inline comment of
-    *template*. Raises ValueError for values MangoWM can't read back."""
-    indent, comment, raw = "", "", None
-    if template is not None:
-        parsed = split_line(template)
-        if parsed:
-            indent, comment = parsed[3], parsed[2]
-            body = split_comment(template)[0]
-            raw = body[body.index("=") + 1:].strip(C_SPACE)
-    return "%s%s=%s%s" % (indent, key, _quote_for(str(value), raw), comment)
-
-
-def expand_vars(value: str, variables: dict) -> str:
-    """Expand ``$name`` and ``${name}`` like MangoWM's expand_config_variables().
-    Unknown names are left as written."""
-    out, i, n = [], 0, len(value)
-    while i < n:
-        if value[i] == "$" and i + 1 < n:
-            if value[i + 1] == "{":
-                close = value.find("}", i + 2)
-                if close != -1:
-                    name = value[i + 2:close]
-                    if 0 < len(name) < 128 and name in variables:
-                        out.append(variables[name])
-                    else:
-                        out.append(value[i:close + 1])
-                    i = close + 1
-                    continue
-            elif value[i + 1].isascii() and (value[i + 1].isalpha() or value[i + 1] == "_"):
-                j = i + 1
-                while j < n and value[j].isascii() and (value[j].isalnum() or value[j] == "_"):
-                    j += 1
-                name = value[i + 1:j]
-                out.append(variables[name] if len(name) < 128 and name in variables
-                           else value[i:j])
-                i = j
+    def _backup(self, docs):
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        bdir = os.path.join(self.backup_root, stamp)
+        for doc in docs:
+            if doc.real in self._backed_up:
                 continue
-        out.append(value[i])
-        i += 1
-    return "".join(out)
+            os.makedirs(bdir, exist_ok=True)
+            base = os.path.basename(doc.real)
+            dest, n = os.path.join(bdir, base), 1
+            while os.path.exists(dest):
+                stem, ext = os.path.splitext(base)
+                dest = os.path.join(bdir, "%s_%d%s" % (stem, n, ext)); n += 1
+            shutil.copy2(doc.real, dest, follow_symlinks=True)
+            self._backed_up.add(doc.real)
 
-
-VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def resolve_source(value: str, root: str) -> str:
-    """Resolve a ``source=`` path exactly like MangoWM's resolve_config_path().
-
-    ``./x`` is relative to the folder of the *root* config (``mango -c``'s
-    folder, or ~/.config/mango), not to the file that contains the line;
-    ``~`` and ``~/x`` use $HOME; anything else is used as written (absolute,
-    or relative to the current directory). Symlinks are not resolved here,
-    so a symlinked root config still resolves ``./x`` next to the link.
-    """
-    value = value.strip(C_SPACE)
-    if value.startswith("./"):
-        return os.path.join(os.path.dirname(root), value[2:])
-    if value == "~" or value.startswith("~/"):
-        return HOME + value[1:]
-    return value
-
-
-def detect_format(path: str) -> str:
-    """"toml" or "conf", using MangoWM's detect_config_format() rules."""
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".toml", ".conf"):
-        return ext[1:]
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read(65536)
-    except OSError:
-        return "conf"
-    for line in data.split(b"\n"):
-        stripped = line.lstrip(C_SPACE.encode())
-        if not stripped or stripped.startswith(b"#"):
-            continue
-        return "toml" if stripped.startswith(b"[") else "conf"
-    return "conf"
-
-
-def detect_root_config(explicit: str | None = None) -> tuple[str, str]:
-    """Return (path, kind) of the config MangoWM will load.
-
-    kind is "conf", "toml" (unsupported, read-only) or "new" (nothing exists yet).
-    Mirrors the lookup order in MangoWM's src/config/load.c.
-    """
-    if explicit:
-        path = os.path.abspath(os.path.expanduser(explicit))
-        if not os.path.exists(path):
-            return path, "new"
-        return path, detect_format(path)
-    conf = os.path.join(MANGO_DIR, "config.conf")
-    toml = os.path.join(MANGO_DIR, "config.toml")
-    if os.path.exists(conf):
-        return conf, "conf"
-    if os.path.exists(toml):
-        return toml, "toml"
-    return conf, "new"
-
-
-class ConfigTree:
-    """The MangoWM config: a root file plus everything it ``source``s.
-
-    MangoWM parses top to bottom, recursing into ``source*=`` and
-    ``source_optional*=`` lines every time they appear (the same file may be
-    included several times), and the last assignment of a key wins. We
-    always re-read from disk before changing anything, so edits made in an
-    editor (or by another page) are never clobbered.
-    """
-
-    def __init__(self, root: str):
-        self.root = root
-        self.problems = []  # filled by scan()
-
-    def scan(self) -> tuple[list, list]:
-        """Return (entries, files) in MangoWM parse order.
-
-        *files* lists every loaded file once (first occurrence). Problems
-        such as missing includes or cycles are stored in ``self.problems``.
-        """
-        entries, files, problems = [], [], []
-        canonical = {}   # realpath -> first path string seen for it
-        stack = []       # realpaths of the files being parsed right now
-        variables = {}
-
-        def walk(path, depth, origin, required):
-            real = os.path.realpath(path)
-            if real in stack:
-                problems.append(Problem(
-                    "cycle", path, origin,
-                    "%s includes itself (directly or through other files). MangoWM "
-                    "would loop forever on this; remove one of the source lines."
-                    % path))
-                return
-            if depth > MAX_INCLUDE_DEPTH:
-                problems.append(Problem(
-                    "depth", path, origin,
-                    "includes are nested more than %d levels deep; %s was not read."
-                    % (MAX_INCLUDE_DEPTH, path)))
-                return
-            if not os.path.isfile(path):
-                if origin is not None and required:
-                    problems.append(Problem(
-                        "missing", path, origin,
-                        "%s is included with source= but doesn't exist. Create it or "
-                        "use source_optional=." % path))
-                return
+    def _write_doc(self, doc):
+        target = doc.real  # write through symlinks to their target
+        text = doc.render_text()
+        data = text.encode("utf-8", "surrogateescape")
+        directory = os.path.dirname(target) or "."
+        try:
+            mode = stat.S_IMODE(os.stat(target).st_mode)
+        except OSError:
+            mode = 0o644
+        fd, tmp = tempfile.mkstemp(prefix=".mango-settings-", dir=directory)
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, target)
+        except BaseException:
             try:
-                lines = read_lines(path)
-            except OSError as err:
-                problems.append(Problem("unreadable", path, origin,
-                                        "can't read %s: %s" % (path, describe_error(err))))
-                return
-            path = canonical.setdefault(real, path)
-            if path not in files:
-                files.append(path)
-            if detect_format(path) == "toml":
-                problems.append(Problem(
-                    "toml", path, origin,
-                    "%s is in TOML format; Mango Settings shows its settings but "
-                    "can't read or edit them." % path))
-                return
-            stack.append(real)
-            try:
-                for idx, line in enumerate(lines):
-                    parsed = split_line(line)
-                    if not parsed:
-                        continue
-                    key, raw = parsed[0], parsed[1]
-                    value = expand_vars(raw, variables)
-                    if key.startswith("source"):  # strncmp() prefix match, like MangoWM
-                        walk(resolve_source(value, self.root), depth + 1, (path, idx),
-                             not key.startswith("source_optional"))
-                        continue
-                    if key == "var" and "," in value:
-                        name, _, val = value.partition(",")
-                        name = name.strip(C_SPACE)
-                        if VAR_NAME_RE.match(name):
-                            variables[name] = val.strip(C_SPACE)
-                    entries.append(Entry(path, idx, key, value, raw))
-            finally:
-                stack.pop()
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        st = os.stat(target)
+        doc.mtime_ns, doc.size = st.st_mtime_ns, st.st_size
+        self._loaded_stats[doc.real] = (doc.mtime_ns, doc.size)
+        doc.dirty = False
 
-        walk(self.root, 0, None, True)
-        self.problems = problems
-        return entries, files
-
-    def files(self) -> list:
-        """Every file MangoWM loads, in load order."""
-        return self.scan()[1]
-
-    def values(self) -> dict:
-        """Effective value of each key as MangoWM sees it (last one wins)."""
-        return {e.key: e.value for e in self.scan()[0]}
-
-    def get(self, key: str, default=None):
-        return self.values().get(key, default)
-
-    def set(self, key: str, value) -> str:
-        """Change *key* where it currently takes effect; returns the file written.
-
-        If that file isn't writable (e.g. a system file included with
-        ``source=/etc/...``) the assignment is appended to the root config
-        instead, which MangoWM parses last, so it still wins.
-        """
-        value = str(value)
-        for _attempt in range(3):
-            hits = [e for e in self.scan()[0] if e.key == key]
-            if not hits:
-                return self._append_root(key, value)
-            e = hits[-1]
-            real = os.path.realpath(e.path)
-            if os.path.exists(real) and not os.access(real, os.W_OK) and e.path != self.root:
-                return self._append_root(key, value)
-            lines = read_lines(e.path)
-            current = split_line(lines[e.idx]) if e.idx < len(lines) else None
-            if not current or current[0] != key:
-                continue  # file changed between scan and read: rescan
-            new = format_line(key, value, lines[e.idx])
-            if lines[e.idx] != new:
-                lines[e.idx] = new
-                write_lines(e.path, lines)
-            return e.path
-        raise ConfigError("%s keeps changing on disk; not saved." % os.path.basename(self.root),
-                          self.root)
-
-    def _append_root(self, key, value):
-        lines = read_lines(self.root)
-        lines.append(format_line(key, value))
-        write_lines(self.root, lines)
-        return self.root
-
-    def unset(self, key: str) -> None:
-        """Remove every assignment of *key* so MangoWM falls back to its default."""
-        by_file = {}
-        for e in self.scan()[0]:
-            if e.key == key:  # a file included twice yields the same line twice
-                by_file.setdefault(e.path, set()).add(e.idx)
-        for path, idxs in by_file.items():
-            lines = read_lines(path)
-            idxs = [i for i in idxs if i < len(lines) and (split_line(lines[i]) or ("",))[0] == key]
-            for i in sorted(idxs, reverse=True):
-                del lines[i]
-            if idxs:
-                write_lines(path, lines)
-
-    def is_sourced(self, path: str) -> bool:
-        real = os.path.realpath(path)
-        return any(os.path.realpath(f) == real for f in self.files())
-
-    def add_source(self, path: str) -> None:
-        """Append ``source=./name`` (or an absolute path) to the root config."""
-        rel = os.path.relpath(path, os.path.dirname(self.root))
-        target = "./%s" % rel if not rel.startswith("..") else os.path.abspath(path)
-        lines = read_lines(self.root)
-        lines.append(format_line("source", target))
-        write_lines(self.root, lines)
-
-
-def parse_bool(value, default=0):
-    try:
-        return int(float(str(value).strip())) != 0  # MangoWM uses atoi()
-    except (TypeError, ValueError):
-        return bool(default)
-
-
-def format_number(value, kind, digits=2):
-    if kind == "int":
-        return str(int(round(value)))
-    text = ("%%.%df" % digits) % value
-    text = text.rstrip("0")
-    return text + "0" if text.endswith(".") else text
-
-
-def normalize_mods(mods):
-    parts = sorted(p.strip().upper() for p in mods.split("+") if p.strip())
-    parts = [p for p in parts if p != "NONE"] or ["NONE"]
-    return "+".join(parts)
+    # -- misc --------------------------------------------------------------------
+    def summary(self):
+        errors = [i for i in self.issues if i.severity == Issue.ERROR]
+        warnings = [i for i in self.issues if i.severity != Issue.ERROR]
+        return errors, warnings
 
 
 # ---------------------------------------------------------------------------
-# System helpers
+# List files: bind.conf, rule.conf, monitor.conf
+#    bind    = MODS, key, action, params...
+#    monitor = NAME, enabled, x, y, width, height, scale, ...
+#    window_rule[_once] = class, title, tags, float, ...
+# Values may contain commas inside the last field, so only the first three
+# commas of a bind (mods, key, action) and a bounded number of fields are split.
 # ---------------------------------------------------------------------------
 
-def read_first(path, default=""):
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read()
-    except OSError:
-        return default
+class RuleFile(object):
+    """A config file consisting of ``name = field, field, ...`` records."""
+
+    def __init__(self, path):
+        self.path = os.path.abspath(os.path.expanduser(path))
+        self.real = os.path.realpath(self.path)
+        self.exists = os.path.exists(self.real)
+        self.raw_lines = []     # (kind, payload)  kind: blank/comment/unknown/record
+        self.dirty = False
+        self._stats = None
+        if self.exists:
+            self.load()
+
+    def load(self):
+        with open(self.real, "rb") as fh:
+            text = fh.read().decode("utf-8", errors="surrogateescape")
+        self._stats = (os.stat(self.real).st_mtime_ns, os.stat(self.real).st_size)
+        self.raw_lines = []
+        for raw in text.split("\n"):
+            s = raw.strip()
+            if not s or s.startswith("#"):
+                self.raw_lines.append(["pass", raw])
+                continue
+            body, _c = _split_inline_comment(s)
+            m = _OPT_RE.match(body.strip())
+            if m:
+                fields = [f.strip() for f in m.group(2).split(",")]
+                self.raw_lines.append(["record", (m.group(1), fields, s)])
+            else:
+                self.raw_lines.append(["pass", raw])
+        return self
+
+    def records(self, name):
+        """[(index, fields)] for every record named ``name``."""
+        return [(i, payload[1][1]) for i, payload in enumerate(self.raw_lines)
+                if payload[0] == "record" and payload[1][0] == name]
+
+    def add(self, name, fields):
+        self.raw_lines.append(["record", (name, fields,
+                                          "%s = %s" % (name, ", ".join(fields)))])
+        self.dirty = True
+
+    def update(self, index, fields):
+        payload = self.raw_lines[index][1]
+        name = payload[0]
+        self.raw_lines[index] = ["record", (name, fields,
+                                            "%s = %s" % (name, ", ".join(fields)))]
+        self.dirty = True
+
+    def remove(self, index):
+        del self.raw_lines[index]
+        self.dirty = True
+
+    def render_text(self):
+        out = []
+        for kind, payload in self.raw_lines:
+            out.append(payload if kind == "pass" else payload[2])
+        return "\n".join(out) + "\n"
+
+    def save(self):
+        if not self.dirty:
+            return
+        data = self.render_text().encode("utf-8", "surrogateescape")
+        directory = os.path.dirname(self.real) or "."
+        mode = stat.S_IMODE(os.stat(self.real).st_mode) if self.exists else 0o644
+        fd, tmp = tempfile.mkstemp(prefix=".mango-settings-", dir=directory)
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, self.real)
+        self.dirty = False
+        self.exists = True
+        self.load()
+
+    # -- domain helpers ----------------------------------------------------
+    @staticmethod
+    def bind_conflicts(records):
+        """records: list of (index, fields).  Two binds with the same
+        modifiers+key are a conflict."""
+        seen, out = {}, []
+        for index, fields in records:
+            if len(fields) < 3:
+                out.append((index, "malformed bind (need MODS, key, action)"))
+                continue
+            ident = (fields[0].lower().replace(" ", ""), fields[1].lower().replace(" ", ""))
+            if ident in seen:
+                out.append((index, "conflicts with line for %s %s" % (fields[0], fields[1])))
+            else:
+                seen[ident] = index
+        return out
 
 
-def run_quick(argv, timeout=2):
-    if not shutil.which(argv[0]):
-        return None
+# ---------------------------------------------------------------------------
+# System helpers (no GTK): mmsg, system info, notification daemons
+# ---------------------------------------------------------------------------
+
+def run_cmd(argv, timeout=5):
+    """Run a command; return (returncode, stdout).  Missing tools give rc -1."""
     try:
-        res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return (res.stdout or res.stderr).strip() or None
+        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=timeout)
+        return proc.returncode, proc.stdout.decode("utf-8", "replace").strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return -1, str(exc)
+
+
+def find_tool(name):
+    return shutil.which(name)
+
+
+def mmsg_available():
+    return find_tool("mmsg") is not None
+
+
+def reload_mango():
+    """Ask MangoWM to reload via mmsg (falls back to mangoctl-free IPC)."""
+    if mmsg_available():
+        rc, out = run_cmd(["mmsg", "reload"])
+        if rc == 0:
+            return True, ""
+        return False, out or "mmsg reload failed"
+    return False, "mmsg not found (install MangoWM's mmsg to reload from here)"
+
+
+def connected_monitors():
+    """Best-effort connected display list via mmsg.  Returns [(name, desc)]."""
+    if not mmsg_available():
+        return []
+    for argv in (["mmsg", "monitors"], ["mmsg", "--monitors"], ["mmsg", "list-monitors"]):
+        rc, out = run_cmd(argv)
+        if rc == 0 and out:
+            monitors = []
+            for line in out.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(None, 1)
+                name = parts[0]
+                desc = parts[1] if len(parts) > 1 else ""
+                if re.match(r"^[A-Z]+\d*[-0-9]*$", name):   # DP-1, HDMI-A-1, eDP-1...
+                    monitors.append((name, desc))
+            if monitors:
+                return monitors
+    return []
 
 
 def mango_version():
-    out = run_quick(["mmsg", "get", "version"])
-    if out:
-        try:
-            return json.loads(out).get("version") or out
-        except (ValueError, AttributeError):
-            pass
-    out = run_quick(["mango", "-v"])
-    return out.splitlines()[0] if out else "not found"
+    if mmsg_available():
+        for argv in (["mmsg", "version"], ["mmsg", "--version"]):
+            rc, out = run_cmd(argv)
+            if rc == 0 and out:
+                return out.splitlines()[0]
+    return "unknown (mmsg not found)"
 
 
-def mango_monitors():
-    out = run_quick(["mmsg", "get", "all-monitors"])
-    if not out:
-        return []
+def notification_daemons():
+    """Detect running notification daemons.  Returns [(name, running, config)]."""
+    candidates = [
+        ("swaync", ["swaync"], "~/.config/swaync/config.json"),
+        ("mako", ["mako"], "~/.config/mako/config"),
+        ("dunst", ["dunst"], "~/.config/dunst/dunstrc"),
+        ("fnott", ["fnott"], "~/.config/fnott/fnott.ini"),
+    ]
+    found = []
+    for name, proc_names, cfg in candidates:
+        rc, _ = run_cmd(["pgrep", "-x", proc_names[0]], timeout=2)
+        running = rc == 0 or any(find_tool(p) for p in proc_names)
+        found.append((name, running, os.path.expanduser(cfg)))
+    return found
+
+
+def system_info():
+    info = []
+    info.append(("MangoWM / mmsg", mango_version()))
+    if os.path.exists("/etc/os-release"):
+        data = {}
+        with open("/etc/os-release") as fh:
+            for line in fh:
+                if "=" in line:
+                    k, _, v = line.partition("=")
+                    data[k.strip()] = v.strip().strip('"')
+        info.append(("OS", data.get("PRETTY_NAME", data.get("NAME", "?"))))
+    rc, kernel = run_cmd(["uname", "-r"])
+    info.append(("Kernel", kernel if rc == 0 else "?"))
     try:
-        return json.loads(out).get("monitors", [])
-    except (ValueError, AttributeError):
-        return []
-
-
-def format_uptime():
+        with open("/proc/cpuinfo") as fh:
+            model = next((l.split(":", 1)[1].strip() for l in fh
+                          if l.startswith("model name")), "?")
+    except OSError:
+        model = "?"
+    info.append(("CPU", model))
     try:
-        secs = int(float(read_first("/proc/uptime", "0").split()[0]))
-    except (ValueError, IndexError):
-        return "unknown"
-    days, rem = divmod(secs, 86400)
-    hours, rem = divmod(rem, 3600)
-    mins = rem // 60
-    parts = []
-    if days:
-        parts.append("%d day%s" % (days, "s" if days != 1 else ""))
-    if hours:
-        parts.append("%d hour%s" % (hours, "s" if hours != 1 else ""))
-    parts.append("%d minute%s" % (mins, "s" if mins != 1 else ""))
-    return ", ".join(parts)
-
-
-def memory_usage():
-    info = {}
-    for line in read_first("/proc/meminfo").splitlines():
-        name, _, rest = line.partition(":")
-        try:
-            info[name] = int(rest.split()[0])
-        except (ValueError, IndexError):
-            pass
-    if "MemTotal" not in info:
-        return "unknown"
-    used = info["MemTotal"] - info.get("MemAvailable", info.get("MemFree", 0))
-    return "%.1f GiB / %.1f GiB" % (used / 1048576, info["MemTotal"] / 1048576)
-
-
-def os_name():
-    text = read_first("/etc/os-release") or read_first("/usr/lib/os-release")
-    for line in text.splitlines():
-        if line.startswith("PRETTY_NAME="):
-            return strip_quotes(line.split("=", 1)[1].strip())
-    return "Linux"
-
-
-def cpu_name():
-    info = read_first("/proc/cpuinfo")
-    for field in ("model name", "hardware", "cpu model", "cpu"):  # x86, ARM, MIPS, POWER
-        for line in info.splitlines():
-            name, _, value = line.partition(":")
-            if name.strip().lower() == field and value.strip():
-                return value.strip()
-    model = read_first("/proc/device-tree/model").strip("\x00\n ")  # Raspberry Pi and other boards
-    return model or os.uname().machine
-
-
-def data_dirs():
-    dirs = [os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")]
-    dirs += (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
-    # Places some distros keep themes that may be missing from XDG_DATA_DIRS
-    # when the app is started from a launcher: Nix profiles and Flatpak exports.
-    user = os.environ.get("USER") or os.path.basename(HOME)
-    dirs += [os.path.join(HOME, ".nix-profile", "share"), "/etc/profiles/per-user/%s/share" % user,
-             "/run/current-system/sw/share", "/usr/share",
-             os.path.join(HOME, ".local", "share", "flatpak", "exports", "share"),
-             "/var/lib/flatpak/exports/share"]
-    out = []
-    for d in dirs:
-        if d and d not in out:
-            out.append(d)
-    return out
-
-
-def _list_theme_dirs(bases, predicate):
-    found = set()
-    for base in bases:
-        try:
-            names = os.listdir(base)
-        except OSError:
-            continue
-        for name in names:
-            path = os.path.join(base, name)
-            if not name.startswith(".") and os.path.isdir(path) and predicate(path):
-                found.add(name)
-    return sorted(found, key=str.lower)
-
-
-def gtk_themes():
-    bases = [os.path.join(HOME, ".themes")] + [os.path.join(d, "themes") for d in data_dirs()]
-    found = _list_theme_dirs(bases, lambda p: os.path.isdir(os.path.join(p, "gtk-3.0")))
-    for builtin in ("Adwaita", "HighContrast", "HighContrastInverse"):  # compiled into GTK
-        if builtin not in found:
-            found.append(builtin)
-    return sorted(found, key=str.lower)
-
-
-def icon_bases():
-    return [os.path.join(HOME, ".icons")] + [os.path.join(d, "icons") for d in data_dirs()]
-
-
-def icon_themes():
-    def is_icon_theme(path):
-        if not os.path.isfile(os.path.join(path, "index.theme")):
-            return False
-        return "Directories=" in read_first(os.path.join(path, "index.theme"))
-    return [t for t in _list_theme_dirs(icon_bases(), is_icon_theme) if t != "default"]
-
-
-def cursor_themes():
-    return _list_theme_dirs(icon_bases(), lambda p: os.path.isdir(os.path.join(p, "cursors")))
-
-
-PAGE_NAMES = ("Appearance", "Animations", "Window behavior", "Layouts", "Keybindings",
-              "Workspaces", "Window rules", "Monitors", "Input devices", "Startup apps",
-              "Theming", "Notifications", "Config files", "System info")
-
-
-def check_config(root: str, out=sys.stdout) -> int:
-    """Print the files MangoWM loads and any include problems (for --check).
-    Returns a process exit code: 0 if nothing is wrong, 1 otherwise."""
-    tree = ConfigTree(root)
+        with open("/proc/meminfo") as fh:
+            total = next(l.split(":", 1)[1].strip() for l in fh if l.startswith("MemTotal"))
+            avail = next(l.split(":", 1)[1].strip() for l in fh if l.startswith("MemAvailable"))
+        info.append(("Memory", "%s total / %s available" % (total, avail)))
+    except (OSError, StopIteration):
+        info.append(("Memory", "?"))
     try:
-        entries, files = tree.scan()
-    except OSError as err:
-        out.write("error: %s\n" % describe_error(err))
-        return 1
-    if not files:
-        out.write("No config at %s (MangoWM uses its defaults).\n" % root)
-    for f in files:
-        out.write("%s\n" % f)
-    out.write("%d setting%s in %d file%s\n" % (len(entries), "" if len(entries) == 1 else "s",
-                                               len(files), "" if len(files) == 1 else "s"))
-    for p in tree.problems:
-        where = " (%s:%d)" % (p.origin[0], p.origin[1] + 1) if p.origin else ""
-        out.write("%s: %s%s\n" % ("note" if p.kind == "toml" else "problem", p.message, where))
-    return 1 if any(p.kind != "toml" for p in tree.problems) else 0
+        with open("/proc/uptime") as fh:
+            secs = int(float(fh.read().split()[0]))
+        info.append(("Uptime", "%d d %d h %d m" % (secs // 86400, secs % 86400 // 3600,
+                                                   secs % 3600 // 60)))
+    except (OSError, ValueError, IndexError):
+        info.append(("Uptime", "?"))
+    info.append(("Config", os.path.expanduser(DEFAULT_CONFIG_PATH)))
+    return info
+
+
+# ---------------------------------------------------------------------------
+# GSettings helpers (theming page / app theme)
+# ---------------------------------------------------------------------------
+
+def gsettings_get(schema, key):
+    rc, out = run_cmd(["gsettings", "get", schema, key])
+    if rc != 0:
+        return None
+    return out.strip().strip("'\"")
+
+
+def gsettings_set(schema, key, value):
+    rc, out = run_cmd(["gsettings", "set", schema, key, value])
+    return rc == 0, out
+
+
+GTK_THEME_SCHEMA = "org.gnome.desktop.interface"
 
 
 # ---------------------------------------------------------------------------
 # GTK user interface
 # ---------------------------------------------------------------------------
 
-try:
-    import gi
-    gi.require_version("Gtk", "3.0")
-    gi.require_version("Gdk", "3.0")
-    from gi.repository import Gdk, Gio, GLib, Gtk, Pango
-    HAVE_GTK = True
-except (ImportError, ValueError) as _gtk_error:
-    HAVE_GTK = False
-    GTK_ERROR = _gtk_error
+def run_gui(args):
+    try:
+        import gi  # noqa: F401
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk, Gdk, Gio, GLib  # noqa: F401
+    except (ImportError, ValueError, KeyError) as exc:
+        sys.stderr.write(
+            "Mango Settings needs GTK 3 and PyGObject:\n"
+            "  Arch/Manjaro: sudo pacman -S python-gobject gtk3\n"
+            "  Debian/Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0\n"
+            "  Fedora: sudo dnf install python3-gobject gtk3\n"
+            "  Alpine:  apk add py3-gobject3 gtk+3.0\n"
+            "  Void:    xbps-install python3-gobject gtk+3\n"
+            "  (%s)\n" % exc)
+        return 1
 
-if HAVE_GTK:
+    from gi.repository import Gtk, Gdk, Gio, GLib
 
-    APP_CSS = b"""
-    headerbar.mango {
-      background-image: none;
-      background-color: shade(@theme_selected_bg_color, 0.95);
-      border-color: shade(@theme_selected_bg_color, 0.8);
-    }
-    headerbar.mango .title, headerbar.mango .subtitle,
-    headerbar.mango button, headerbar.mango button label,
-    headerbar.mango button image { color: white; }
-    headerbar.mango button {
-      background-image: none;
-      background-color: alpha(white, 0.16);
-      border-color: alpha(white, 0.22);
-      box-shadow: none;
-      text-shadow: none;
-      -gtk-icon-shadow: none;
-    }
-    headerbar.mango button:hover { background-color: alpha(white, 0.28); }
+    # ------------------------------------------------------------------ pages
+    class PageBase(Gtk.Box):
+        """Common scaffolding: titled, scrollable, reports changes upward."""
 
-    .sidebar { border-right: 1px solid alpha(@theme_fg_color, 0.12); }
-    .sidebar list { background-color: transparent; }
-    .sidebar list row { border-radius: 8px; margin: 1px 6px; padding: 2px 4px; }
-    .sidebar list row:selected {
-      background-color: @theme_selected_bg_color;
-      color: @theme_selected_fg_color;
-    }
-    .sidebar list row:selected image, .sidebar list row:selected label {
-      color: @theme_selected_fg_color;
-    }
-
-    .page-title { font-weight: 800; font-size: 20px; }
-    .section-title { font-weight: 700; margin-top: 6px; }
-    .dim-label { opacity: 0.6; }
-    .key-name { font-family: monospace; font-size: 85%; opacity: 0.55; }
-
-    list.card {
-      border: 1px solid alpha(@theme_fg_color, 0.14);
-      border-radius: 10px;
-      background-color: @theme_base_color;
-    }
-    list.card row { padding: 6px 12px; border-bottom: 1px solid alpha(@theme_fg_color, 0.07); }
-    list.card row:last-child { border-bottom: none; }
-    list.card row.explicit .setting-label { font-weight: 600; }
-
-    .welcome {
-      background-color: alpha(@theme_selected_bg_color, 0.10);
-      border: 1px solid alpha(@theme_selected_bg_color, 0.25);
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .toast {
-      background-color: alpha(black, 0.82);
-      color: white;
-      border-radius: 999px;
-      padding: 8px 18px;
-      margin: 18px 18px 64px 18px;
-    }
-    .toast.error { background-color: #b3261e; }
-    .warning-text { color: #c77c02; font-weight: 700; }
-    """
-
-    def open_path(path, app=None):
-        """Open a file or folder with the default application."""
-        try:
-            Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(path, None), None)
-            return True
-        except GLib.Error as err:
-            if shutil.which("xdg-open"):
-                subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
-                return True
-            if app:
-                app.toast("Couldn't open %s: %s" % (path, err.message), error=True)
-            return False
-
-    def run_async(argv, on_done=None):
-        """Run a command without blocking the UI. on_done(ok, output)."""
-        if not shutil.which(argv[0]):
-            if on_done:
-                on_done(False, "%s is not installed" % argv[0])
-            return
-        try:
-            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE
-                                      | Gio.SubprocessFlags.STDERR_PIPE)
-        except GLib.Error as err:
-            if on_done:
-                on_done(False, err.message)
-            return
-
-        def finished(p, res):
-            try:
-                _ok, out, err = p.communicate_utf8_finish(res)
-            except GLib.Error as e:
-                out, err = "", e.message
-            if on_done:
-                on_done(p.get_successful(), (out or err or "").strip())
-        proc.communicate_utf8_async(None, None, finished)
-
-    def interface_settings():
-        source = Gio.SettingsSchemaSource.get_default()
-        if source is None:
-            return None
-        schema = source.lookup("org.gnome.desktop.interface", True)
-        if schema is None:
-            return None
-        return Gio.Settings.new("org.gnome.desktop.interface"), schema
-
-    def section_label(text):
-        lab = Gtk.Label(label=text, xalign=0)
-        lab.get_style_context().add_class("section-title")
-        return lab
-
-    def dim_label(text, wrap=True, markup=False):
-        lab = Gtk.Label(xalign=0, wrap=wrap)
-        lab.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        if markup:
-            lab.set_markup(text)
-        else:
-            lab.set_text(text)
-        lab.get_style_context().add_class("dim-label")
-        return lab
-
-    class Debouncer:
-        """Call fn(*args) once input has been quiet for *ms* milliseconds."""
-
-        def __init__(self, ms, fn):
-            self.ms, self.fn, self.src, self.args = ms, fn, None, None
-
-        def __call__(self, *args):
-            self.args = args
-            if self.src:
-                GLib.source_remove(self.src)
-            self.src = GLib.timeout_add(self.ms, self._fire)
-
-        def _fire(self):
-            self.src = None
-            self.fn(*self.args)
-            return False
-
-        def flush(self):
-            if self.src:
-                GLib.source_remove(self.src)
-                self._fire()
-
-    # -- pages -------------------------------------------------------------
-
-    class Page(Gtk.Box):
-        """Base class. Pages may implement refresh(), save() and is_dirty()."""
-        edits_mango_config = True
-        keywords = ()
-
-        def __init__(self, app, title, subtitle=None):
-            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            self.app = app
-            self.title = title
-            self.set_border_width(24)
-            head = Gtk.Label(label=title, xalign=0)
-            head.get_style_context().add_class("page-title")
-            self.pack_start(head, False, False, 0)
-            if subtitle:
-                self.pack_start(dim_label(subtitle, markup=True), False, False, 0)
-
-        def refresh(self):
-            pass
-
-        def is_dirty(self):
-            return False
-
-        def matches(self, query):
-            text = " ".join((self.title,) + tuple(self.keywords)).lower()
-            return query in text
-
-        def filter(self, query):
-            pass
-
-    class SettingsPage(Page):
-        """Switches, spin buttons and dropdowns bound to MangoWM options."""
-
-        def __init__(self, app, title, sections):
-            super().__init__(app, title,
-                             "Changes are written to your MangoWM config as you make them. "
-                             "<b>Bold</b> settings are set in your config; the others use "
-                             "MangoWM's default.")
-            self.sections = sections
-            self.items = {}
-            self._loading = False
-            self.keywords = tuple(w for _s, _n, items in sections for it in items
-                                  for w in (it[0], it[1]))
-            self.debounced = {}
-            for sec_title, note, items in sections:
-                block = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                block.pack_start(section_label(sec_title), False, False, 0)
-                if note:
-                    block.pack_start(dim_label(note), False, False, 0)
-                lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-                lb.get_style_context().add_class("card")
-                for item in items:
-                    lb.add(self._build_row(item, block))
-                block.pack_start(lb, False, False, 0)
-                self.pack_start(block, False, False, 0)
-            self.refresh()
-
-        def _build_row(self, item, block):
-            key, label, kind, default, opts = item
-            row = Gtk.ListBoxRow(activatable=False)
-            box = Gtk.Box(spacing=12)
-            texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-            lab = Gtk.Label(label=label, xalign=0, wrap=True)
-            lab.get_style_context().add_class("setting-label")
-            keylab = Gtk.Label(label=key, xalign=0)
-            keylab.get_style_context().add_class("key-name")
-            keylab.set_selectable(True)
-            texts.pack_start(lab, False, False, 0)
-            texts.pack_start(keylab, False, False, 0)
-            box.pack_start(texts, True, True, 0)
-
-            if kind == "bool":
-                w = Gtk.Switch(valign=Gtk.Align.CENTER)
-                w.connect("notify::active", lambda sw, _p: self._changed(key))
-            elif kind in ("int", "float"):
-                lo, hi, step = opts[0], opts[1], opts[2]
-                w = Gtk.SpinButton.new_with_range(lo, hi, step)
-                w.set_digits(0 if kind == "int" else opts[3])
-                w.set_valign(Gtk.Align.CENTER)
-                w.set_width_chars(7)
-                w.connect("value-changed", lambda *_: self._changed(key, debounce=True))
-            elif kind == "choice":
-                w = Gtk.ComboBoxText(valign=Gtk.Align.CENTER)
-                if default is None:
-                    w.append("", "MangoWM default")
-                for opt in opts:
-                    w.append(opt, opt)
-                w.connect("changed", lambda *_: self._changed(key))
-            elif kind == "cursor":
-                w = Gtk.ComboBoxText.new_with_entry()
-                w.set_valign(Gtk.Align.CENTER)
-                for name in cursor_themes():
-                    w.append_text(name)
-                w.get_child().set_placeholder_text("system default")
-                w.connect("changed", lambda *_: self._changed(key, debounce=True))
-            else:
-                w = Gtk.Entry(width_chars=22, valign=Gtk.Align.CENTER)
-                w.set_placeholder_text("not set")
-                w.connect("changed", lambda *_: self._changed(key, debounce=True))
-            box.pack_start(w, False, False, 0)
-
-            reset = Gtk.Button.new_from_icon_name("edit-undo-symbolic", Gtk.IconSize.BUTTON)
-            reset.set_relief(Gtk.ReliefStyle.NONE)
-            reset.set_valign(Gtk.Align.CENTER)
-            reset.set_tooltip_text("Reset to MangoWM default (%s)" % (
-                "unset" if default in (None, "") else default))
-            reset.connect("clicked", lambda *_: self._reset(key))
-            box.pack_start(reset, False, False, 0)
-            row.add(box)
-            self.items[key] = dict(item=item, widget=w, row=row, reset=reset,
-                                   block=block, text=(key + " " + label).lower())
-            return row
-
-        # value <-> widget
-        def _read_widget(self, key):
-            info = self.items[key]
-            _k, _l, kind, _d, opts = info["item"]
-            w = info["widget"]
-            if kind == "bool":
-                return "1" if w.get_active() else "0"
-            if kind in ("int", "float"):
-                return format_number(w.get_value(), kind, 0 if kind == "int" else opts[3])
-            if kind == "choice":
-                return w.get_active_id()
-            if kind == "cursor":
-                return w.get_child().get_text().strip()
-            return w.get_text().strip()
-
-        def _write_widget(self, key, value):
-            info = self.items[key]
-            _k, _l, kind, default, opts = info["item"]
-            w = info["widget"]
-            if value is None:
-                value = default
-            if kind == "bool":
-                w.set_active(parse_bool(value, default))
-            elif kind in ("int", "float"):
-                try:
-                    num = float(value)
-                except (TypeError, ValueError):
-                    num = float(default or 0)
-                w.set_value(num)
-            elif kind == "choice":
-                val = value or ""
-                if not w.set_active_id(val):
-                    if val:
-                        w.append(val, "%s (unknown value)" % val)
-                        w.set_active_id(val)
-                    else:
-                        w.set_active(-1)
-            elif kind == "cursor":
-                w.get_child().set_text(value or "")
-            else:
-                w.set_text(value or "")
-
-        def refresh(self):
-            values = self.app.tree.values()
-            self._loading = True
-            try:
-                for key, info in self.items.items():
-                    self._write_widget(key, values.get(key))
-                    self._mark(key, key in values)
-                    info["row"].set_tooltip_text(self._problem(key, values.get(key)))
-            finally:
-                self._loading = False
-
-        def _problem(self, key, value):
-            """Tooltip for values MangoWM would not read as the widget shows them."""
-            kind = self.items[key]["item"][2]
-            if value is None or kind not in ("int", "float"):
-                return None
-            try:
-                float(value)
-            except ValueError:
-                return ("Your config has %s=%s, which isn't a number. MangoWM reads only "
-                        "its leading digits (0 if there are none)." % (key, value))
-            return None
-
-        def _mark(self, key, explicit):
-            info = self.items[key]
-            ctx = info["row"].get_style_context()
-            (ctx.add_class if explicit else ctx.remove_class)("explicit")
-            info["reset"].set_sensitive(explicit)
-
-        def _changed(self, key, debounce=False):
-            if self._loading:
-                return
-            if debounce:
-                if key not in self.debounced:
-                    self.debounced[key] = Debouncer(500, self._save_key)
-                    self.app.pending.append(self.debounced[key])
-                self.debounced[key](key)
-            else:
-                self._save_key(key)
-
-        def _save_key(self, key):
-            value = self._read_widget(key)
-            kind = self.items[key]["item"][2]
-            try:
-                if kind == "choice" and not value:
-                    self.app.tree.unset(key)
-                    self._mark(key, False)
-                else:
-                    path = self.app.tree.set(key, value)
-                    self._mark(key, True)
-                    self.app.saved(os.path.basename(path))
-            except (OSError, ValueError) as err:
-                self.app.toast("Couldn't save %s: %s" % (key, describe_error(err)), error=True)
-
-        def _reset(self, key):
-            try:
-                self.app.tree.unset(key)
-            except OSError as err:
-                self.app.toast("Couldn't reset %s: %s" % (key, describe_error(err)), error=True)
-                return
-            self._loading = True
-            self._write_widget(key, None)
-            self._loading = False
-            self._mark(key, False)
-            self.app.saved(None, "%s reset to default" % key)
-
-        def filter(self, query):
-            visible_blocks = set()
-            for info in self.items.values():
-                show = not query or query in info["text"] or query in self.title.lower()
-                info["row"].set_visible(show)
-                if show:
-                    visible_blocks.add(info["block"])
-            for info in self.items.values():
-                info["block"].set_visible(info["block"] in visible_blocks)
-
-    class RuleListPage(Page):
-        """Editable table for repeated keys (bind, exec_once, monitor_rule …).
-
-        Entries are collected from every file MangoWM loads, edited in place
-        and written back to the file/line they came from. Nothing is written
-        until you press Save.
-        """
-        title = "Rules"
-        subtitle = None
-        key_re = r"^$"
-        key_choices = ()
-        columns = (("Rule", True),)
-        preferred_file = None
-        add_label = "Add"
-
-        # subclasses customise these
-        def split(self, key, value):
-            return [value]
-
-        def join(self, key, cols):
-            return cols[0]
-
-        def new_entry(self):
-            return self.key_choices[0], [""] * len(self.columns)
-
-        def annotate(self, rows):
-            return [""] * len(rows)
+        page_key = None
 
         def __init__(self, app):
-            super().__init__(app, self.title, self.subtitle)
-            self._key_re = re.compile(self.key_re)
-            self.ncols = len(self.columns)
-            # path, idx, key, cols..., warn, file-label, context
-            types = [str, int, str] + [str] * self.ncols + [str, str, str]
-            self.store = Gtk.ListStore(*types)
-            self.c_warn = 3 + self.ncols
-            self.c_file = self.c_warn + 1
-            self.c_ctx = self.c_file + 1
-            self.query = ""
-            self.filtered = self.store.filter_new()
-            self.filtered.set_visible_func(self._visible)
-            self.dirty = False
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.app = app
+            self.set_border_width(12)
+            head = Gtk.Label(xalign=0)
+            head.set_markup("<b>%s</b>" % GLib.markup_escape_text(PAGE_TITLES[self.page_key]))
+            head.get_style_context().add_class("large-title") if hasattr(head.get_style_context(), "add_class") else None
+            self.pack_start(head, False, False, 6)
+            self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.add(self.content)
+            self.pack_start(scroll, True, True, 0)
+            self.changed = False
+            self.build()
 
-            bar = Gtk.Box(spacing=6)
-            self.search = Gtk.SearchEntry(placeholder_text="Filter…")
-            self.search.connect("search-changed", self._on_filter)
-            bar.pack_start(self.search, False, False, 0)
-            for label, icon, cb in ((self.add_label, "list-add-symbolic", self.on_add),
-                                    ("Delete", "list-remove-symbolic", self.on_delete)):
-                b = Gtk.Button(label=label, image=Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON),
-                               always_show_image=True)
-                b.connect("clicked", cb)
-                bar.pack_start(b, False, False, 0)
-            self.extra_buttons(bar)
-            self.pack_start(bar, False, False, 0)
-
-            self.view = Gtk.TreeView(model=self.filtered, enable_search=False)
-            self.view.set_grid_lines(Gtk.TreeViewGridLines.HORIZONTAL)
-            if len(self.key_choices) > 1:
-                kinds = Gtk.ListStore(str)
-                for k in self.key_choices:
-                    kinds.append([k])
-                cell = Gtk.CellRendererCombo(model=kinds, text_column=0, has_entry=True,
-                                             editable=True)
-                cell.connect("edited", self._on_key_edited)
-                col = Gtk.TreeViewColumn("Type", cell, text=2)
-                col.set_resizable(True)
-                self.view.append_column(col)
-            for i, (title, expand) in enumerate(self.columns):
-                cell = Gtk.CellRendererText(editable=True, ellipsize=Pango.EllipsizeMode.END)
-                cell.connect("edited", self._on_cell_edited, 3 + i)
-                col = Gtk.TreeViewColumn(title, cell, text=3 + i)
-                col.set_resizable(True)
-                col.set_expand(expand)
-                col.set_min_width(140 if title == "Modifiers" else 80)
-                self.view.append_column(col)
-            self.ctx_col = Gtk.TreeViewColumn("Mode", Gtk.CellRendererText(), text=self.c_ctx)
-            self.ctx_col.set_visible(False)
-            self.view.append_column(self.ctx_col)
-            fcell = Gtk.CellRendererText(foreground="gray")
-            self.view.append_column(Gtk.TreeViewColumn("File", fcell, text=self.c_file))
-            wcell = Gtk.CellRendererText(foreground="#c77c02", weight=700)
-            self.view.append_column(Gtk.TreeViewColumn("", wcell, text=self.c_warn))
-
-            sc = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, vexpand=True)
-            sc.set_min_content_height(260)
-            sc.add(self.view)
-            self.pack_start(sc, True, True, 0)
-
-            bottom = Gtk.Box(spacing=6)
-            self.status = dim_label("", wrap=False)
-            bottom.pack_start(self.status, True, True, 0)
-            self.revert_btn = Gtk.Button(label="Revert")
-            self.revert_btn.connect("clicked", lambda *_: self.refresh(force=True))
-            self.save_btn = Gtk.Button(label="Save")
-            self.save_btn.get_style_context().add_class("suggested-action")
-            self.save_btn.connect("clicked", lambda *_: self.save())
-            bottom.pack_end(self.save_btn, False, False, 0)
-            bottom.pack_end(self.revert_btn, False, False, 0)
-            self.pack_start(bottom, False, False, 0)
-            self.after_build()
-            self.refresh(force=True)
-
-        def extra_buttons(self, bar):
+        def build(self):
             pass
 
-        def after_build(self):
-            pass
+        def mark_changed(self, *_a):
+            self.changed = True
+            self.app.on_page_changed(self)
 
-        # loading
-        def refresh(self, force=False):
-            if self.dirty and not force:
-                return
-            entries, files = self.app.tree.scan()
-            self.store.clear()
-            self.originals = {}
-            self.stamps = {f: file_stamp(f) for f in files}
-            self.files = files
-            mode = "default"
-            rows = []
-            cache = {}
-            for e in entries:
-                if e.key == "key_mode":
-                    mode = e.value or "default"
+        def unsaved(self):
+            return self.changed
+
+        def clear_dirty(self):
+            self.changed = False
+
+        def add_note(self, text):
+            label = Gtk.Label(xalign=0)
+            label.set_markup("<small>%s</small>" % GLib.markup_escape_text(text))
+            label.set_line_wrap(True)
+            self.content.pack_start(label, False, False, 2)
+
+        def add_frame(self, title=None):
+            frame = Gtk.Frame()
+            frame.set_shadow_type(Gtk.ShadowType.NONE)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            frame.add(box)
+            self.content.pack_start(frame, False, False, 2)
+            return box
+
+    class SchemaPage(PageBase):
+        """Generated from the schema: one row per option definition."""
+
+        def __init__(self, app, page_key):
+            self.page_key = page_key
+            super().__init__(app)
+
+        def build(self):
+            grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            grid.set_margin_top(6)
+            self.widgets = {}
+            row = 0
+            for opt in SCHEMA[self.page_key]:
+                if self.page_key != "appearance" and opt.key in HIDDEN_OPTION_KEYS:
                     continue
-                if not self._key_re.match(e.key) or (e.path, e.idx) in self.originals:
-                    continue  # a file sourced twice yields the same line twice
-                if e.path not in cache:
-                    try:
-                        cache[e.path] = read_lines(e.path)
-                    except OSError:
-                        cache[e.path] = []
-                if e.idx >= len(cache[e.path]):
-                    continue
-                cols = self._pad(self.split(e.key, e.raw))
-                self.originals[(e.path, e.idx)] = (cache[e.path][e.idx], e.key, cols)
-                rows.append([e.path, e.idx, e.key] + cols
-                            + ["", self._file_label(e.path), mode])
-            for row in rows:
-                self.store.append(row)
-            self.ctx_col.set_visible(any(r[self.c_ctx] != "default" for r in rows))
-            self._set_dirty(False)
-            self._reannotate()
+                grid.attach(Gtk.Label(label=opt.label, xalign=0), 0, row, 1, 1)
+                widget = self._make_widget(opt)
+                self.widgets[opt.key] = (opt, widget)
+                grid.attach(widget, 1, row, 1, 1)
+                if opt.desc:
+                    note = Gtk.Label(xalign=0)
+                    note.set_markup("<small>%s</small>" % GLib.markup_escape_text(opt.desc))
+                    note.get_style_context().add_class("dim-label")
+                    grid.attach(note, 2, row, 1, 1)
+                row += 1
+            if row == 0:
+                self.add_note("Nothing to configure here.")
+            frame = self.add_frame()
+            frame.add(grid)
+            self.show_all()
 
-        def _pad(self, cols):
-            cols = list(cols)[:self.ncols]
-            return cols + [""] * (self.ncols - len(cols))
+        def _current(self, opt):
+            val = self.app.config.get(opt.key)
+            if val is None:
+                val = opt.default
+            return val
 
-        def _file_label(self, path):
-            if not path:
-                return "(new)"
+        def _make_widget(self, opt):
+            if opt.type == OptDef.BOOL:
+                w = Gtk.Switch(halign=Gtk.Align.START)
+                w.set_active((self._current(opt) or "0") == "1")
+                w.connect("notify::active", self._on_bool, opt)
+                return w
+            if opt.type in (OptDef.INT, OptDef.FLOAT):
+                adj = Gtk.Adjustment(
+                    float(self._current(opt) or opt.default),
+                    float(opt.min if opt.min is not None else 0),
+                    float(opt.max if opt.max is not None else 100000),
+                    1.0 if opt.type == OptDef.INT else 0.05,
+                    10.0, 0)
+                w = Gtk.SpinButton(adjustment=adj,
+                                   digits=0 if opt.type == OptDef.INT else 2)
+                w.connect("value-changed", self._on_number, opt)
+                return w
+            if opt.type == OptDef.CHOICE:
+                w = Gtk.ComboBoxText()
+                for c in opt.choices:
+                    w.append_text(c)
+                cur = self._current(opt) or opt.default
+                if opt.choices and cur not in opt.choices:
+                    cur = opt.default
+                w.set_active(opt.choices.index(cur) if cur in opt.choices else 0)
+                w.connect("changed", self._on_choice, opt)
+                return w
+            w = Gtk.Entry(width_chars=24, hexpand=True)
+            w.set_text(self._current(opt) or "")
+            w.connect("changed", self._on_text, opt)
+            return w
+
+        def _apply(self, opt, value):
             try:
-                rel = os.path.relpath(path, os.path.dirname(self.app.tree.root))
-            except ValueError:
-                rel = path
-            return path if rel.startswith("..") else rel
+                self.app.config.set(opt.key, value)
+                self.mark_changed()
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
 
-        def _rows(self):
-            return [list(r) for r in self.store]
+        def _on_bool(self, sw, _pspec, opt):
+            self._apply(opt, "1" if sw.get_active() else "0")
 
-        def _reannotate(self):
-            rows = self._rows()
-            notes = self.annotate(rows)
-            for r, note in zip(self.store, notes):
-                if r[self.c_warn] != note:
-                    r[self.c_warn] = note
-            n = len(self.store)
-            warn = sum(1 for x in notes if x)
-            text = "%d entr%s" % (n, "y" if n == 1 else "ies")
-            if warn:
-                text += " · %d warning%s" % (warn, "" if warn == 1 else "s")
-            if self.dirty:
-                text += " · unsaved changes"
-            self.status.set_text(text)
+        def _on_number(self, spin, opt):
+            if opt.type == OptDef.INT:
+                self._apply(opt, str(int(spin.get_value())))
+            else:
+                self._apply(opt, ("%f" % spin.get_value()).rstrip("0").rstrip("."))
 
-        def _set_dirty(self, dirty):
-            self.dirty = dirty
-            self.save_btn.set_sensitive(dirty)
-            self.revert_btn.set_sensitive(dirty)
+        def _on_choice(self, combo, opt):
+            text = combo.get_active_text()
+            if text:
+                self._apply(opt, text)
 
-        def is_dirty(self):
-            return self.dirty
+        def _on_text(self, entry, opt):
+            self._apply(opt, entry.get_text())
 
-        def _changed(self):
-            self._set_dirty(True)
-            self._reannotate()
+    # -------------------------------------------------------------- list pages
+    class RuleListPage(PageBase):
+        """Editor for a RuleFile: list of records with add/edit/delete."""
 
-        # filtering
-        def _visible(self, model, it, _data=None):
-            if not self.query:
-                return True
-            row = model[it]
-            return any(self.query in str(row[i]).lower()
-                       for i in [2] + list(range(3, 3 + self.ncols)) + [self.c_file])
+        record_name = None
 
-        def _on_filter(self, entry):
-            self.query = entry.get_text().strip().lower()
-            self.filtered.refilter()
+        def __init__(self, app):
+            super().__init__(app)
 
-        def _child_iter(self, path):
-            it = self.filtered.get_iter(Gtk.TreePath(path))
-            return self.filtered.convert_iter_to_child_iter(it)
+        def rules(self):
+            return self.app.rule_file(self.rule_file_attr).records(self.record_name)
 
-        # editing
-        def _on_cell_edited(self, _cell, path, text, col):
-            it = self._child_iter(path)
-            if self.store[it][col] != text:
-                self.store[it][col] = text
-                self._changed()
+        def build(self):
+            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+            frame = self.add_frame()
+            frame.add(self.listbox)
+            btns = Gtk.ButtonBox(spacing=6, layout=Gtk.ButtonBoxStyle.START)
+            add = Gtk.Button(label="Add")
+            add.connect("clicked", self.on_add)
+            btns.add(add)
+            self.content.pack_start(btns, False, False, 4)
+            self.rebuild()
 
-        def _on_key_edited(self, _cell, path, text):
-            text = text.strip()
-            if not self._key_re.match(text):
-                self.app.toast("“%s” isn't a valid type here" % text, error=True)
-                return
-            it = self._child_iter(path)
-            if self.store[it][2] != text:
-                self.store[it][2] = text
-                self._changed()
+        def rule_file_attr(self):
+            raise NotImplementedError
 
-        def add_row(self, key, cols, start_editing=True):
-            it = self.store.append(["", -1, key] + self._pad(cols)
-                                   + ["", "(new)", "default"])
-            self._changed()
-            if start_editing:
-                self.search.set_text("")
-                ok, fit = self.filtered.convert_child_iter_to_iter(it)
-                if ok:
-                    path = self.filtered.get_path(fit)
-                    first = self.view.get_column(1 if len(self.key_choices) > 1 else 0)
-                    self.view.set_cursor(path, first, True)
-            return it
+        def field_labels(self):
+            raise NotImplementedError
 
-        def on_add(self, _b):
-            key, cols = self.new_entry()
-            self.add_row(key, cols)
-
-        def on_delete(self, _b):
-            model, it = self.view.get_selection().get_selected()
-            if it is None:
-                self.app.toast("Select an entry to delete first")
-                return
-            self.store.remove(model.convert_iter_to_child_iter(it))
-            self._changed()
-
-        # saving
-        def target_file(self):
-            if self.preferred_file:
-                pref = os.path.join(os.path.dirname(self.app.tree.root), self.preferred_file)
-                if self.app.tree.is_sourced(pref):
-                    return pref
-            last = [r[0] for r in self.store if r[1] >= 0]
-            return last[-1] if last else self.app.tree.root
-
-        def save(self):
-            if not self.dirty:
-                return True
-            changed = [f for f, st in self.stamps.items() if file_stamp(f) != st]
-            if changed:
-                dlg = Gtk.MessageDialog(
-                    transient_for=self.get_toplevel(), modal=True,
-                    message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.OK_CANCEL,
-                    text="Config changed on disk")
-                dlg.format_secondary_text(
-                    "%s changed since this page was loaded. Reload it from disk? "
-                    "Your unsaved edits on this page will be lost."
-                    % ", ".join(os.path.basename(f) for f in changed))
-                resp = dlg.run()
+        def edit_dialog(self, fields=None, on_ok=None):
+            dlg = Gtk.Dialog(title=self.record_name.capitalize(),
+                             transient_for=self.get_toplevel(), modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Save", Gtk.ResponseType.OK)
+            grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+            grid.set_border_width(12)
+            entries = []
+            labels = self.field_labels()
+            for i, label in enumerate(labels):
+                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
+                entry = Gtk.Entry(width_chars=32)
+                entry.set_text(fields[i] if fields and i < len(fields) else "")
+                grid.attach(entry, 1, i, 1, 1)
+                entries.append(entry)
+            dlg.get_content_area().add(grid)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK:
+                values = [e.get_text().strip() for e in entries]
                 dlg.destroy()
-                if resp == Gtk.ResponseType.OK:
-                    self.refresh(force=True)
-                return False
+                on_ok(values)
+                return True
+            dlg.destroy()
+            return False
 
-            edits = {}  # path -> {idx: new_text or None}
-            present = set()
-            new_rows = []
-            for r in self.store:
-                path, idx, key = r[0], r[1], r[2]
-                cols = [r[3 + i] for i in range(self.ncols)]
-                if idx < 0:
-                    try:
-                        new_rows.append(format_line(key, self.join(key, cols)))
-                    except ValueError as err:
-                        self.app.toast("Couldn't save %s: %s" % (key, err), error=True)
-                        return False
-                    continue
-                present.add((path, idx))
-                orig, orig_key, orig_cols = self.originals[(path, idx)]
-                if key == orig_key and cols == orig_cols:
-                    continue  # untouched: keep the line byte for byte
-                try:
-                    edits.setdefault(path, {})[idx] = format_line(key, self.join(key, cols), orig)
-                except ValueError as err:
-                    self.app.toast("Couldn't save %s: %s" % (key, err), error=True)
-                    return False
-            for (path, idx) in self.originals:
-                if (path, idx) not in present:
-                    edits.setdefault(path, {})[idx] = None
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            records = self.rules()
+            conflicts = dict(RuleFile.bind_conflicts(records))
+            for index, fields in records:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                text = ", ".join(fields)[:80]
+                label = Gtk.Label(label=text, xalign=0, hexpand=True)
+                box.pack_start(label, True, True, 8)
+                if index in conflicts:
+                    warn = Gtk.Label()
+                    warn.set_markup("<span foreground='orange'>⚠ %s</span>"
+                                    % GLib.markup_escape_text(conflicts[index]))
+                    box.pack_start(warn, False, False, 4)
+                for lbl, handler, arg in (("Edit", self.on_edit, index),
+                                          ("Delete", self.on_delete, index)):
+                    b = Gtk.Button(label=lbl)
+                    b.connect("clicked", handler, arg)
+                    box.pack_start(b, False, False, 2)
+                row.add(box)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            if not records:
+                self.add_note("No %s entries yet — click Add." % self.record_name)
 
-            target = self.target_file()
-            try:
-                for path in set(edits) | ({target} if new_rows else set()):
-                    lines = read_lines(path)
-                    insert_at = len(lines)
-                    if path == target and new_rows:
-                        hits = [i for i, l in enumerate(lines)
-                                if split_line(l) and self._key_re.match(split_line(l)[0])]
-                        insert_at = hits[-1] + 1 if hits else len(lines)
-                    out = []
-                    for i, line in enumerate(lines):
-                        if i == insert_at and path == target:
-                            out.extend(new_rows)
-                        change = edits.get(path, {}).get(i, line)
-                        if change is not None:
-                            out.append(change)
-                    if path == target and insert_at >= len(lines):
-                        out.extend(new_rows)
-                    write_lines(path, out)
-            except OSError as err:
-                self.app.toast("Couldn't save: %s" % describe_error(err), error=True)
-                return False
-            self._set_dirty(False)
-            self.refresh(force=True)
-            self.app.saved(None, "%s saved" % self.title)
-            return True
+        def after_change(self):
+            self.app.rule_file(self.rule_file_attr()).save()
+            self.clear_dirty()
+            self.rebuild()
+
+        def on_add(self, _btn):
+            self.edit_dialog(on_ok=self._added)
+
+        def _added(self, values):
+            self.app.rule_file(self.rule_file_attr()).add(self.record_name, values)
+            self.after_change()
+
+        def on_edit(self, _btn, index):
+            fields = self.app.rule_file(self.rule_file_attr()).raw_lines[index][1][1]
+            self.edit_dialog(fields=list(fields), on_ok=lambda v: self._edited(index, v))
+
+        def _edited(self, index, values):
+            self.app.rule_file(self.rule_file_attr()).update(index, values)
+            self.after_change()
+
+        def on_delete(self, _btn, index):
+            self.app.rule_file(self.rule_file_attr()).remove(index)
+            self.after_change()
 
     class KeybindsPage(RuleListPage):
-        title = "Keybindings"
-        subtitle = ("Every <tt>bind</tt> line MangoWM loads, from all included files. "
-                    "Double-click a cell to edit. Modifiers: SUPER, CTRL, ALT, SHIFT or NONE "
-                    "(combine with +). Key names come from <tt>wev</tt>.")
-        key_re = r"^bind[slrpc]*$"
-        key_choices = ("bind", "binds", "bindl", "bindr", "bindp", "bindsl")
-        columns = (("Modifiers", False), ("Key", False), ("Action", True))
-        preferred_file = "bind.conf"
-        keywords = ("shortcuts", "hotkeys", "bind", "keys")
-        add_label = "Add shortcut"
+        page_key = "keybindings"
+        record_name = "bind"
 
-        def split(self, key, value):
-            parts = [p.strip() for p in value.split(",", 2)]
-            return parts + [""] * (3 - len(parts))
+        def rule_file_attr(self):
+            return "bind"
 
-        def join(self, key, cols):
-            return "%s,%s,%s" % (cols[0].strip(), cols[1].strip(), cols[2].strip())
+        def field_labels(self):
+            return ["Modifiers (SUPER, SHIFT…)", "Key", "Action", "Arguments"]
 
-        def new_entry(self):
-            return "bind", ["SUPER", "", "spawn,foot"]
-
-        def annotate(self, rows):
-            seen, notes = {}, []
-            for r in rows:
-                mods, key = r[3], r[4]
-                if not key.strip():
-                    notes.append("⚠ no key")
-                    continue
-                if not r[5].strip():
-                    notes.append("⚠ no action")
-                    continue
-                combo = (r[self.c_ctx], normalize_mods(mods), key.strip().lower(),
-                         "r" in r[2][4:])
-                notes.append("")
-                if "c" not in r[2][4:]:
-                    seen.setdefault(combo, []).append(len(notes) - 1)
-            for idxs in seen.values():
-                if len(idxs) > 1:
-                    for i in idxs:
-                        notes[i] = "⚠ conflict"
-            return notes
-
-    class StartupPage(RuleListPage):
-        title = "Startup apps"
-        subtitle = ("<tt>exec_once</tt> runs when MangoWM starts; <tt>exec</tt> runs on every "
-                    "config reload. Commands go through the shell.")
-        key_re = r"^exec(_once)?$"
-        key_choices = ("exec_once", "exec")
-        columns = (("Command", True),)
-        keywords = ("autostart", "exec", "login", "waybar", "wallpaper")
-        add_label = "Add app"
-
-        def new_entry(self):
-            return "exec_once", [""]
-
-        def after_build(self):
-            self.script_bar = Gtk.InfoBar(message_type=Gtk.MessageType.INFO, show_close_button=True)
-            self.script_bar.connect("response", self._on_script_bar)
-            self.script_bar.get_content_area().add(Gtk.Label(
-                label="autostart.sh exists but MangoWM doesn't run it. "
-                      "MangoWM has no built-in autostart script; it needs an exec_once line.",
-                wrap=True, xalign=0))
-            self.script_bar.add_button("Run it at startup", 1)
-            self.script_bar.add_button("Edit script", 2)
-            self.script_bar.set_no_show_all(True)
-            self.pack_start(self.script_bar, False, False, 0)
-            self.reorder_child(self.script_bar, 2)
-
-        def _script(self):
-            return os.path.join(os.path.dirname(self.app.tree.root), "autostart.sh")
-
-        def refresh(self, force=False):
-            super().refresh(force)
-            if not hasattr(self, "script_bar"):
-                return
-            script = self._script()
-            used = any("autostart.sh" in r[3] for r in self.store)
-            if os.path.isfile(script) and not used:
-                self.script_bar.show()
-                for child in self.script_bar.get_content_area().get_children():
-                    child.show()
-            else:
-                self.script_bar.hide()
-
-        def _on_script_bar(self, bar, resp):
-            if resp == 1:
-                script = self._script()
-                try:
-                    os.chmod(script, os.stat(script).st_mode | 0o111)
-                except OSError as err:
-                    self.app.toast("Couldn't make %s executable: %s. MangoWM can't run it until "
-                                   "you do (chmod +x)." % (os.path.basename(script),
-                                                          describe_error(err)), error=True)
-                self.add_row("exec_once", [script.replace(HOME, "~", 1)], start_editing=False)
-                bar.hide()
-            elif resp == 2:
-                open_path(self._script(), self.app)
-            else:
-                bar.hide()
-
-    class MonitorsPage(RuleListPage):
-        title = "Monitors"
-        subtitle = ("One <tt>monitor_rule</tt> per display, written as <tt>parameter:value</tt> "
-                    "pairs, e.g. <tt>name:^DP-1$,width:2560,height:1440,refresh:144,x:0,y:0,scale:1</tt>. "
-                    "Other parameters: make, model, vrr, rr (rotation 0-7), disable, primary.")
-        key_re = r"^monitor_rule$"
-        key_choices = ("monitor_rule",)
-        columns = (("Rule", True),)
-        preferred_file = "monitor.conf"
-        keywords = ("display", "screen", "resolution", "refresh", "scale", "output")
-        add_label = "Add rule"
-
-        def new_entry(self):
-            return "monitor_rule", ["name:^eDP-1$,width:1920,height:1080,refresh:60,x:0,y:0,scale:1"]
-
-        def extra_buttons(self, bar):
-            b = Gtk.Button(label="Add connected displays")
-            b.set_tooltip_text("Create rules for the monitors MangoWM currently drives (uses mmsg)")
-            b.connect("clicked", self.on_detect)
-            bar.pack_start(b, False, False, 0)
-
-        def on_detect(self, _b):
-            mons = mango_monitors()
-            if not mons:
-                self.app.toast("No monitors reported — is MangoWM running and mmsg installed?",
-                               error=True)
-                return
-            refresh = {}
-            display = Gdk.Display.get_default()
-            for i in range(display.get_n_monitors() if display else 0):
-                m = display.get_monitor(i)
-                g = m.get_geometry()
-                refresh[(g.x, g.y)] = m.get_refresh_rate() / 1000.0
-            existing = " ".join(r[3] for r in self.store)
-            added = 0
-            for m in mons:
-                name = m.get("name")
-                if not name or ("^%s$" % name) in existing:
-                    continue
-                scale = float(m.get("scale") or 1)
-                parts = ["name:^%s$" % name,
-                         "width:%d" % round(m.get("width", 0) * scale),
-                         "height:%d" % round(m.get("height", 0) * scale)]
-                hz = refresh.get((m.get("x"), m.get("y")))
-                if hz:
-                    parts.append("refresh:%g" % round(hz, 3))
-                parts += ["x:%d" % m.get("x", 0), "y:%d" % m.get("y", 0),
-                          "scale:%g" % scale]
-                self.add_row("monitor_rule", [",".join(parts)], start_editing=False)
-                added += 1
-            self.app.toast("Added %d monitor rule%s — review and Save" % (added, "" if added == 1 else "s")
-                           if added else "All connected monitors already have rules")
-
-    class WorkspacesPage(RuleListPage):
-        title = "Workspaces"
-        subtitle = ("Per-tag rules, e.g. <tt>id:1,layout_name:scroller</tt>. Layouts: tile, scroller, "
-                    "grid, deck, monocle, center_tile, vertical_tile, vertical_scroller. Other "
-                    "parameters: monitor_name, master_count, master_factor, no_hide, open_as_floating.")
-        key_re = r"^tag_rule$"
-        key_choices = ("tag_rule",)
-        columns = (("Rule", True),)
-        preferred_file = "tag.conf"
-        keywords = ("tags", "tag_rule", "layout")
-        add_label = "Add rule"
-
-        def new_entry(self):
-            ids = []
-            for r in self.store:
-                m = re.search(r"(?:^|,)id:(\d+)", r[3])
-                if m:
-                    ids.append(int(m.group(1)))
-            return "tag_rule", ["id:%d,layout_name:tile" % (max(ids) + 1 if ids else 1)]
+        def build(self):
+            super().build()
+            self.add_note("Conflicting binds (same modifiers and key) are flagged. "
+                          "Ctrl+R sends the reload to MangoWM after saving.")
 
     class WindowRulesPage(RuleListPage):
-        title = "Window rules"
-        subtitle = ("Match windows by <tt>app_id</tt> or <tt>title</tt> (regex) and set properties, "
-                    "e.g. <tt>is_floating:1,width:1000,height:700,app_id:pavucontrol</tt>. "
-                    "<tt>window_rule_once</tt> applies only when the window opens.")
-        key_re = r"^window_rule(_once)?$"
-        key_choices = ("window_rule", "window_rule_once")
-        columns = (("Rule", True),)
-        keywords = ("floating", "app_id", "rules", "window_rule")
-        add_label = "Add rule"
+        page_key = "windowrules"
+        record_name = "window_rule"
 
-        def new_entry(self):
-            return "window_rule", ["is_floating:1,app_id:"]
+        def rule_file_attr(self):
+            return "rule"
 
-    class ConfigFilesPage(Page):
-        """Plain-text editor for any file in the config tree."""
-        keywords = ("advanced", "edit", "text", "source", "include", "backup", "conf")
+        def field_labels(self):
+            return ["Window class", "Title", "Tags", "Float (0/1)", "Monitor"]
 
-        def __init__(self, app):
-            super().__init__(app, "Config files",
-                             "Edit your config files directly. MangoWM loads them in this order.")
-            self.path = None
-            bar = Gtk.Box(spacing=6)
-            self.combo = Gtk.ComboBoxText()
-            self.combo.connect("changed", self._on_pick)
-            bar.pack_start(self.combo, True, True, 0)
-            for label, cb in (("Open in editor", self._open_external),
-                              ("Backups", lambda *_: self._open_backups())):
-                b = Gtk.Button(label=label)
-                b.connect("clicked", cb)
-                bar.pack_start(b, False, False, 0)
-            self.pack_start(bar, False, False, 0)
+        def build(self):
+            super().build()
+            btn_once = Gtk.Button(label="Add window_rule_once")
+            btn_once.connect("clicked", self.on_add_once)
+            self.content.pack_start(btn_once, False, False, 2)
 
-            self.orphan_bar = Gtk.InfoBar(message_type=Gtk.MessageType.WARNING)
-            self.orphan_label = Gtk.Label(wrap=True, xalign=0)
-            self.orphan_bar.get_content_area().add(self.orphan_label)
-            self.orphan_bar.add_button("Include it", 1)
-            self.orphan_bar.connect("response", self._include)
-            self.orphan_bar.set_no_show_all(True)
-            self.pack_start(self.orphan_bar, False, False, 0)
+        def on_add_once(self, _btn):
+            self.edit_dialog(on_ok=self._added_once)
 
-            # missing includes, cycles, unreadable files: MangoWM loads these
-            # differently than the file list suggests, so say so.
-            self.problem_bar = Gtk.InfoBar(message_type=Gtk.MessageType.WARNING)
-            self.problem_label = Gtk.Label(wrap=True, xalign=0, selectable=True)
-            self.problem_bar.get_content_area().add(self.problem_label)
-            self.problem_bar.set_no_show_all(True)
-            self.pack_start(self.problem_bar, False, False, 0)
+        def _added_once(self, values):
+            self.app.rule_file("rule").add("window_rule_once", values)
+            self.after_change()
 
-            sc = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, vexpand=True, hexpand=True)
-            sc.set_min_content_height(300)
-            self.buf = Gtk.TextBuffer()
-            self.buf.connect("modified-changed", lambda *_: self._update_buttons())
-            tv = Gtk.TextView(buffer=self.buf, monospace=True, wrap_mode=Gtk.WrapMode.NONE,
-                              left_margin=8, top_margin=6)
-            self.view = tv
-            self.readonly_reason = None
-            sc.add(tv)
-            self.pack_start(sc, True, True, 0)
-            bottom = Gtk.Box(spacing=6)
-            self.info = dim_label("", wrap=False)
-            bottom.pack_start(self.info, True, True, 0)
-            self.save_btn = Gtk.Button(label="Save")
-            self.save_btn.get_style_context().add_class("suggested-action")
-            self.save_btn.connect("clicked", lambda *_: self.save())
-            bottom.pack_end(self.save_btn, False, False, 0)
-            self.pack_start(bottom, False, False, 0)
-            self.refresh()
+    class MonitorsPage(RuleListPage):
+        page_key = "monitors"
+        record_name = "monitor"
 
-        def _choices(self):
-            files = self.app.tree.files() or [self.app.tree.root]
-            folder = os.path.dirname(self.app.tree.root)
-            orphans = []
-            try:
-                for name in sorted(os.listdir(folder)):
-                    p = os.path.join(folder, name)
-                    if name.endswith(".conf") and os.path.isfile(p) and \
-                            not any(os.path.realpath(p) == os.path.realpath(f) for f in files):
-                        orphans.append(p)
-            except OSError:
-                pass
-            return files, orphans
+        def rule_file_attr(self):
+            return "monitor"
 
-        def refresh(self, force=False):
-            if self.is_dirty() and not force:
+        def field_labels(self):
+            return ["Name", "Enabled (0/1)", "X", "Y", "Width", "Height",
+                    "Scale", "Refresh", "Transform"]
+
+        def build(self):
+            super().build()
+            self.detect_btn = Gtk.Button(label="Add connected displays (mmsg)")
+            self.detect_btn.connect("clicked", self.on_detect)
+            self.content.pack_start(self.detect_btn, False, False, 2)
+            if not mmsg_available():
+                self.add_note("mmsg not found — 'Add connected displays' needs "
+                              "MangoWM's mmsg. You can still add monitors manually.")
+
+        def on_detect(self, _btn):
+            monitors = connected_monitors()
+            if not monitors:
+                self.app.error_dialog("mmsg reported no connected displays "
+                                      "(or mmsg is not installed).")
                 return
-            files, orphans = self._choices()
-            self._orphans = set(orphans)
-            problems = [p.message for p in self.app.tree.problems]
-            if problems:
-                self.problem_label.set_text("\n".join(problems))
-                self.problem_bar.show()
-                self.problem_label.show()
-            else:
-                self.problem_bar.hide()
-            current = self.path
-            self.combo.handler_block_by_func(self._on_pick)
-            self.combo.remove_all()
-            for p in files:
-                self.combo.append(p, self._label(p))
-            for p in orphans:
-                self.combo.append(p, "%s  (not loaded by MangoWM)" % self._label(p))
-            self.combo.handler_unblock_by_func(self._on_pick)
-            if not self.combo.set_active_id(current or "") and (files or orphans):
-                self.combo.set_active(0)
-            else:
-                self._load(self.combo.get_active_id())
+            rf = self.app.rule_file("monitor")
+            for name, _desc in monitors:
+                if not any(rec[1] and rec[1][0] == name for rec in rf.records("monitor")):
+                    rf.add("monitor", [name, "1", "0", "0", "-1", "-1", "1", "0", "normal"])
+            self.after_change()
 
-        def _label(self, p):
-            return p.replace(HOME, "~", 1)
+    class StartupPage(RuleListPage):
+        page_key = "startup"
+        record_name = "exec"
 
-        def _on_pick(self, combo):
-            pid = combo.get_active_id()
-            if pid == self.path:
-                return
-            if self.is_dirty():
-                dlg = Gtk.MessageDialog(transient_for=self.get_toplevel(), modal=True,
-                                        message_type=Gtk.MessageType.QUESTION,
-                                        buttons=Gtk.ButtonsType.YES_NO,
-                                        text="Discard unsaved changes to %s?" % os.path.basename(self.path))
-                resp = dlg.run()
-                dlg.destroy()
-                if resp != Gtk.ResponseType.YES:
-                    combo.handler_block_by_func(self._on_pick)
-                    combo.set_active_id(self.path)
-                    combo.handler_unblock_by_func(self._on_pick)
-                    return
-            self._load(pid)
+        def rule_file_attr(self):
+            return "config"
 
-        def _load(self, path):
-            self.path = path
-            self.readonly_reason = None
-            text = ""
-            if path:
-                try:
-                    with open(path, "rb") as fh:
-                        text = fh.read().decode("utf-8")
-                except FileNotFoundError:
-                    text = ""
-                except UnicodeDecodeError:
-                    self.readonly_reason = ("isn't valid UTF-8, so it's shown read-only here "
-                                            "to avoid corrupting it. Use Open in editor.")
-                    with open(path, "rb") as fh:
-                        text = fh.read().decode("utf-8", errors="replace")
-                except OSError as err:
-                    self.readonly_reason = "can't be read: %s" % describe_error(err)
-            self.buf.set_text(text)
-            self.buf.set_modified(False)
-            self.view.set_editable(self.readonly_reason is None)
-            self.stamp = file_stamp(path) if path else None
-            if path in getattr(self, "_orphans", ()):
-                self.orphan_label.set_text(
-                    "%s isn't included from your main config, so MangoWM ignores it."
-                    % os.path.basename(path))
-                self.orphan_bar.show()
-                for c in self.orphan_bar.get_content_area().get_children():
-                    c.show()
-            else:
-                self.orphan_bar.hide()
-            self._update_buttons()
+        def rules(self):
+            out = []
+            for key in ("exec", "exec_once"):
+                for value in self.app.config.get_all(key):
+                    out.append((key, value))
+            return out
 
-        def _update_buttons(self):
-            self.save_btn.set_sensitive(bool(self.path) and self.buf.get_modified()
-                                        and self.readonly_reason is None)
-            label = self._label(self.path) if self.path else ""
-            if self.path and self.readonly_reason:
-                label = "%s %s" % (os.path.basename(self.path), self.readonly_reason)
-            self.info.set_text(("Unsaved changes · " if self.buf.get_modified() else "") + label)
+        def field_labels(self):
+            return ["Command", "Run once per session (0/1)"]
 
-        def is_dirty(self):
-            return bool(self.path) and self.buf.get_modified() and self.readonly_reason is None
-
-        def save(self):
-            if not self.is_dirty():
-                return True
-            if file_stamp(self.path) != self.stamp:
-                dlg = Gtk.MessageDialog(transient_for=self.get_toplevel(), modal=True,
-                                        message_type=Gtk.MessageType.WARNING,
-                                        buttons=Gtk.ButtonsType.OK_CANCEL,
-                                        text="%s changed on disk" % os.path.basename(self.path))
-                dlg.format_secondary_text("Overwrite it with your version?")
-                resp = dlg.run()
-                dlg.destroy()
-                if resp != Gtk.ResponseType.OK:
-                    return False
-            start, end = self.buf.get_bounds()
-            try:
-                write_text(self.path, self.buf.get_text(start, end, False))
-            except OSError as err:
-                self.app.toast("Couldn't save: %s" % describe_error(err), error=True)
-                return False
-            self.buf.set_modified(False)
-            self.stamp = file_stamp(self.path)
-            self.app.saved(os.path.basename(self.path))
-            return True
-
-        def _include(self, _bar, _resp):
-            try:
-                self.app.tree.add_source(self.path)
-            except OSError as err:
-                self.app.toast("Couldn't update config: %s" % describe_error(err), error=True)
-                return
-            self.app.saved(None, "%s is now included" % os.path.basename(self.path))
-            self.refresh(force=True)
-
-        def _open_external(self, _b):
-            if self.path:
-                open_path(self.path, self.app)
-
-        def _open_backups(self):
-            folder = backup_dir()
-            try:
-                os.makedirs(folder, exist_ok=True)
-            except OSError as err:
-                self.app.toast("Couldn't open backups: %s" % describe_error(err), error=True)
-                return
-            open_path(folder, self.app)
-
-    class ThemingPage(Page):
-        edits_mango_config = False
-        keywords = ("gtk", "theme", "icons", "font", "dark", "color scheme", "appearance")
-
-        def __init__(self, app):
-            super().__init__(app, "Theming",
-                             "GTK theme, icons and fonts for applications (stored in GSettings).")
-            res = interface_settings()
-            if res is None:
-                self.pack_start(dim_label(
-                    "GSettings schemas for org.gnome.desktop.interface aren't installed. "
-                    "Install gsettings-desktop-schemas to use this page."), False, False, 0)
-                return
-            self.settings, schema = res
-            lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-            lb.get_style_context().add_class("card")
-            self._busy = True
-            self.theme = self._combo(lb, "Application theme", gtk_themes(), "gtk-theme")
-            self.icons = self._combo(lb, "Icon theme", icon_themes(), "icon-theme")
-            self.cursor = self._combo(lb, "Cursor theme (applications)", cursor_themes(), "cursor-theme")
-            if schema.has_key("color-scheme"):
-                self.scheme = self._combo(lb, "Color scheme", ["default", "prefer-dark", "prefer-light"],
-                                          "color-scheme")
-            font = Gtk.FontButton(font=self.settings.get_string("font-name"), valign=Gtk.Align.CENTER)
-            font.connect("font-set", lambda b: self._set("font-name", b.get_font()))
-            self._row(lb, "Interface font", font)
-            self._busy = False
-            self.pack_start(lb, False, False, 0)
-            self.pack_start(dim_label(
-                "Tip: set the MangoWM cursor on the Input devices page too, so it matches "
-                "everywhere. Wallpapers are usually started from Startup apps (e.g. swaybg)."),
-                False, False, 0)
-
-        def _row(self, lb, label, widget):
-            row = Gtk.ListBoxRow(activatable=False)
-            box = Gtk.Box(spacing=12)
-            box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
-            box.pack_start(widget, False, False, 0)
-            row.add(box)
-            lb.add(row)
-
-        def _combo(self, lb, label, values, key):
-            combo = Gtk.ComboBoxText(valign=Gtk.Align.CENTER)
-            current = self.settings.get_string(key)
-            if current and current not in values:
-                values = [current] + list(values)
-            for v in values:
-                combo.append(v, v)
-            combo.set_active_id(current)
-            combo.connect("changed", lambda c: self._set(key, c.get_active_id()))
-            self._row(lb, label, combo)
-            return combo
-
-        def _set(self, key, value):
-            if self._busy or not value:
-                return
-            self.settings.set_string(key, value)
-            Gio.Settings.sync()
-            self.app.toast("%s set to %s" % (key, value))
-
-    NOTIFIERS = (
-        ("SwayNotificationCenter", "swaync", ["~/.config/swaync/config.json", "~/.config/swaync/style.css"],
-         [["swaync-client", "--reload-config"], ["swaync-client", "--reload-css"]]),
-        ("mako", "mako", ["~/.config/mako/config"], [["makoctl", "reload"]]),
-        ("dunst", "dunst", ["~/.config/dunst/dunstrc"], [["dunstctl", "reload"]]),
-        ("fnott", "fnott", ["~/.config/fnott/fnott.ini"], []),
-    )
-
-    class NotificationsPage(Page):
-        edits_mango_config = False
-        keywords = ("swaync", "mako", "dunst", "notification daemon")
-
-        def __init__(self, app):
-            super().__init__(app, "Notifications",
-                             "Detected notification daemons. Start yours from Startup apps.")
-            found = False
-            for name, binary, configs, reloads in NOTIFIERS:
-                configs = [os.path.expanduser(c) for c in configs]
-                installed = shutil.which(binary) is not None
-                existing = [c for c in configs if os.path.exists(c)]
-                if not installed and not existing:
-                    continue
-                found = True
-                lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-                lb.get_style_context().add_class("card")
-                row = Gtk.ListBoxRow(activatable=False)
-                box = Gtk.Box(spacing=8)
-                texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                texts.pack_start(Gtk.Label(label=name, xalign=0), False, False, 0)
-                status = ("installed" if installed else "not installed") + \
-                    (" · config: %s" % ", ".join(c.replace(HOME, "~") for c in existing)
-                     if existing else " · no config file")
-                texts.pack_start(dim_label(status), False, False, 0)
-                box.pack_start(texts, True, True, 0)
-                for cfg in existing:
-                    b = Gtk.Button(label="Edit %s" % os.path.basename(cfg), valign=Gtk.Align.CENTER)
-                    b.connect("clicked", lambda _b, c=cfg: open_path(c, app))
-                    box.pack_start(b, False, False, 0)
-                if reloads and installed:
-                    b = Gtk.Button(label="Reload", valign=Gtk.Align.CENTER)
-                    b.connect("clicked", lambda _b, cmds=reloads, n=name: self._reload(cmds, n))
-                    box.pack_start(b, False, False, 0)
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            entries = self.rules()
+            for i, (key, value) in enumerate(entries):
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                label = Gtk.Label(label=value[:90], xalign=0, hexpand=True)
+                box.pack_start(label, True, True, 8)
+                tag = Gtk.Label()
+                tag.set_markup("<small>%s</small>" % key)
+                box.pack_start(tag, False, False, 4)
+                b = Gtk.Button(label="Delete")
+                b.connect("clicked", self.on_delete, i)
+                box.pack_start(b, False, False, 2)
                 row.add(box)
-                lb.add(row)
-                self.pack_start(lb, False, False, 0)
-            if not found:
-                self.pack_start(dim_label(
-                    "No notification daemon found. Install one (swaync, mako or dunst) and "
-                    "add it to Startup apps, e.g. exec_once=swaync."), False, False, 0)
-            test = Gtk.Button(label="Send a test notification", halign=Gtk.Align.START)
-            test.connect("clicked", lambda *_: self._test())
-            self.pack_start(test, False, False, 0)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            if not entries:
+                self.add_note("No startup commands yet.")
 
-        def _reload(self, cmds, name):
-            def done(ok, out):
-                self.app.toast("%s reloaded" % name if ok else "Reload failed: %s" % out, error=not ok)
-            for cmd in cmds:
-                run_async(cmd, done)
+        def on_add(self, _btn):
+            dlg = Gtk.Dialog(title="Add startup command", transient_for=self.get_toplevel(),
+                             modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Add", Gtk.ResponseType.OK)
+            box = dlg.get_content_area()
+            box.set_spacing(8); box.set_border_width(12)
+            entry = Gtk.Entry(width_chars=40)
+            entry.set_placeholder_text("e.g. swaync  or  foot --server")
+            once = Gtk.CheckButton(label="Run once per session (exec_once)")
+            box.add(Gtk.Label(label="Command", xalign=0)); box.add(entry); box.add(once)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK and entry.get_text().strip():
+                key = "exec_once" if once.get_active() else "exec"
+                self.app.config.add_value(key, entry.get_text().strip())
+                self.app.config.save()
+                self.clear_dirty()
+                self.rebuild()
+            dlg.destroy()
 
-        def _test(self):
-            def finished(conn, res):
-                try:
-                    conn.call_finish(res)
-                    self.app.toast("Test notification sent")
-                except GLib.Error as err:
-                    self.app.toast("No notification daemon answered: %s" % err.message, error=True)
-            try:
-                bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-            except GLib.Error as err:
-                self.app.toast("No session bus: %s" % err.message, error=True)
+        def on_delete(self, _btn, index):
+            key, _value = self.rules()[index]
+            self.app.config.remove_value(key, index if key == "exec"
+                                         else index - len(self.app.config.get_all("exec")))
+            self.app.config.save()
+            self.clear_dirty()
+            self.rebuild()
+
+    class WorkspacesPage(RuleListPage):
+        page_key = "workspaces"
+        record_name = "bind"
+
+        def rule_file_attr(self):
+            return "bind"
+
+        def field_labels(self):
+            return ["Modifiers", "Key", "Action", "Tag / target"]
+
+        def rules(self):
+            out = []
+            for index, fields in self.app.rule_file("bind").records("bind"):
+                if len(fields) >= 4 and fields[2] in ("view", "viewonmon", "tag", "togglegroup"):
+                    out.append((index, fields))
+            return out
+
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            entries = self.rules()
+            for index, fields in entries:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                label = Gtk.Label(label=", ".join(fields)[:80], xalign=0, hexpand=True)
+                box.pack_start(label, True, True, 8)
+                b = Gtk.Button(label="Delete")
+                b.connect("clicked", self.on_delete, index)
+                box.pack_start(b, False, False, 2)
+                row.add(box)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            self.add_note("These are the tag-switching binds in bind.conf "
+                          "(actions: view, viewonmon, tag, togglegroup).")
+
+        def _added(self, values):
+            if len(values) < 4 or values[2] not in ("view", "viewonmon", "tag", "togglegroup"):
+                self.app.error_dialog("Action must be one of: view, viewonmon, tag, togglegroup")
                 return
-            bus.call("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
-                     "org.freedesktop.Notifications", "Notify",
-                     GLib.Variant("(susssasa{sv}i)", (
-                         "Mango Settings", 0, "preferences-desktop", "Test notification",
-                         "If you can read this, notifications work.", [], {}, 5000)),
-                     None, Gio.DBusCallFlags.NONE, 3000, None, finished)
+            self.app.rule_file("bind").add("bind", values)
+            self.after_change()
 
-    class SystemInfoPage(Page):
-        edits_mango_config = False
-        keywords = ("about", "version", "kernel", "memory", "uptime")
+        def on_delete(self, _btn, index):
+            self.app.rule_file("bind").remove(index)
+            self.after_change()
 
-        def __init__(self, app):
-            super().__init__(app, "System info")
-            welcome = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            welcome.get_style_context().add_class("welcome")
-            wlab = Gtk.Label(xalign=0, wrap=True)
-            wlab.set_markup("<big><b>Welcome to Mango Settings %s</b></big>\n"
-                            "Manage your MangoWM setup: appearance, keybindings, monitors "
-                            "and more. Settings are written straight into your config files, "
-                            "and MangoWM reloads them automatically." % __version__)
-            welcome.pack_start(wlab, False, False, 0)
-            self.pack_start(welcome, False, False, 0)
-            self.grid = Gtk.Grid(column_spacing=24, row_spacing=8)
-            self.pack_start(self.grid, False, False, 0)
-            bar = Gtk.Box(spacing=6)
-            for label, cb in (("Refresh", lambda *_: self.refresh()),
-                              ("Copy to clipboard", lambda *_: self._copy())):
-                b = Gtk.Button(label=label)
-                b.connect("clicked", cb)
-                bar.pack_start(b, False, False, 0)
-            self.pack_start(bar, False, False, 0)
-            self._rows = []
-            self.refresh()
+    class ConfigFilesPage(PageBase):
+        page_key = "files"
 
-        def info(self):
-            session = os.environ.get("XDG_SESSION_TYPE", "unknown")
-            if os.environ.get("WAYLAND_DISPLAY"):
-                session += " (%s)" % os.environ["WAYLAND_DISPLAY"]
-            return [
-                ("MangoWM", mango_version()),
-                ("Operating system", os_name()),
-                ("Kernel", os.uname().release),
-                ("Desktop", os.environ.get("XDG_CURRENT_DESKTOP", "unknown")),
-                ("Session", session),
-                ("Processor", cpu_name()),
-                ("Memory", memory_usage()),
-                ("Uptime", format_uptime()),
-                ("Config", self.app.tree.root.replace(HOME, "~", 1)),
-                ("Mango Settings", __version__),
-            ]
+        def build(self):
+            self.listbox = Gtk.ListBox()
+            frame = self.add_frame()
+            frame.add(self.listbox)
+            self.rebuild()
 
-        def refresh(self, force=False):
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            errors, warnings = self.app.config.summary()
+            by_file = {}
+            for issue in errors + warnings:
+                by_file.setdefault(issue.path, []).append(issue)
+            docs = [self.app.config.docs[r] for r in self.app.config.order]
+            extra = [d for d in (self.app.bind_doc, self.app.rule_doc, self.app.monitor_doc)
+                     if d is not None]
+            for doc in list(dict.fromkeys(docs + [e.path for e in errors])) :
+                if not hasattr(doc, "lines"):
+                    continue
+                problems = by_file.get(doc.path, [])
+                row = Gtk.ListBoxRow(activatable=True)
+                row.connect("activate", self.on_open, doc)
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                name = Gtk.Label(label=doc.path.replace(os.path.expanduser("~"), "~"),
+                                 xalign=0, hexpand=True)
+                box.pack_start(name, True, True, 8)
+                if problems:
+                    errs = [p for p in problems if p.severity == Issue.ERROR]
+                    color = "red" if errs else "orange"
+                    text = "%d error%s" % (len(errs), "s" if len(errs) != 1 else "") if errs \
+                        else "%d warning%s" % (len(problems), "s" if len(problems) != 1 else "")
+                    warn = Gtk.Label()
+                    warn.set_markup("<span foreground='%s'>%s</span>" % (color, text))
+                    box.pack_start(warn, False, False, 4)
+                box.pack_start(Gtk.Label(label="edit", ), False, False, 2)
+                row.add(box)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            if warnings or errors:
+                self.add_note("%d error(s), %d warning(s) across all files. Click a file "
+                              "to view and edit it raw." % (len(errors), len(warnings)))
+
+        def on_open(self, _row, doc):
+            path = doc.path if hasattr(doc, "path") else doc
+            try:
+                with open(os.path.realpath(os.path.expanduser(path)), "rb") as fh:
+                    data = fh.read()
+                text = data.decode("utf-8", errors="surrogateescape")
+                lossless = text.encode("utf-8", "surrogateescape") == data
+            except OSError as exc:
+                self.app.error_dialog("Cannot open %s: %s" % (path, exc.strerror))
+                return
+            dlg = Gtk.Dialog(title=os.path.basename(path),
+                             transient_for=self.get_toplevel(), modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Save", Gtk.ResponseType.OK)
+            dlg.set_default_size(700, 500)
+            scroll = Gtk.ScrolledWindow()
+            view = Gtk.TextView()
+            buf = view.get_buffer()
+            buf.set_text(text)
+            if not lossless:
+                view.set_editable(False)
+                self.app.warning_in_dialog(dlg, "File is not valid UTF-8 — opened read-only.")
+            scroll.add(view)
+            scroll.set_vexpand(True)
+            dlg.get_content_area().pack_start(scroll, True, True, 0)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK and lossless:
+                new_text = buf.get_text(*buf.get_bounds(), include_hidden_chars=True)
+                if new_text != text:
+                    with open(os.path.realpath(os.path.expanduser(path)), "wb") as fh:
+                        fh.write(new_text.encode("utf-8", "surrogateescape"))
+                    self.app.reload_config()
+            dlg.destroy()
+
+    class ThemingPage(PageBase):
+        page_key = "theming"
+
+        KEYS = [("gtk-theme", "GTK theme"),
+                ("icon-theme", "Icon theme"),
+                ("cursor-theme", "Cursor theme"),
+                ("color-scheme", "Color scheme (default/prefer-dark/prefer-light)")]
+
+        def build(self):
+            self.entries = {}
+            grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            if gsettings_get(GTK_THEME_SCHEMA, "gtk-theme") is None:
+                self.add_note("gsettings (glib2) is not available — theming page is "
+                              "read-only on this system.")
+            for i, (key, label) in enumerate(self.KEYS):
+                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
+                entry = Gtk.Entry(width_chars=28)
+                current = gsettings_get(GTK_THEME_SCHEMA, key)
+                if current:
+                    entry.set_text(current)
+                entry.connect("activate", self.on_set, key, entry)
+                btn = Gtk.Button(label="Apply")
+                btn.connect("clicked", self.on_set, key, entry)
+                box = Gtk.Box(spacing=6)
+                box.add(entry); box.add(btn)
+                grid.attach(box, 1, i, 1, 1)
+                self.entries[key] = entry
+            frame = self.add_frame()
+            frame.add(grid)
+            self.add_note("Changes apply immediately via gsettings. Press Enter or "
+                          "click Apply.")
+            self.show_all()
+
+        def on_set(self, _btn, key, entry):
+            value = entry.get_text().strip()
+            if value:
+                ok, out = gsettings_set(GTK_THEME_SCHEMA, key, value)
+                if not ok:
+                    self.app.error_dialog("gsettings failed: %s" % out)
+
+    class NotificationsPage(PageBase):
+        page_key = "notifications"
+
+        def build(self):
+            self.grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            frame = self.add_frame()
+            frame.add(self.grid)
+            btn = Gtk.Button(label="Refresh")
+            btn.connect("clicked", lambda *_: self.rebuild())
+            self.content.pack_start(btn, False, False, 4)
+            self.rebuild()
+
+        def rebuild(self):
             for child in self.grid.get_children():
                 self.grid.remove(child)
-            self._rows = self.info()
-            for i, (name, value) in enumerate(self._rows):
-                lab = Gtk.Label(xalign=0)
-                lab.set_markup("<b>%s</b>" % GLib.markup_escape_text(name))
-                val = Gtk.Label(label=value, xalign=0, selectable=True, wrap=True)
-                self.grid.attach(lab, 0, i, 1, 1)
-                self.grid.attach(val, 1, i, 1, 1)
+            found = notification_daemons()
+            active = [(n, c) for n, running, c in found if running]
+            self.grid.attach(Gtk.Label(label="Detected daemon", xalign=0), 0, 0, 1, 1)
+            self.grid.attach(Gtk.Label(label="Config file", xalign=0), 1, 0, 1, 1)
+            if not active:
+                self.grid.attach(Gtk.Label(label="None running"), 0, 1, 1, 1)
+            for i, (name, cfg) in enumerate(active, start=1):
+                self.grid.attach(Gtk.Label(label=name, xalign=0), 0, i, 1, 1)
+                self.grid.attach(Gtk.Label(
+                    label=cfg.replace(os.path.expanduser("~"), "~") +
+                    (" (not created yet)" if not os.path.exists(cfg) else ""),
+                    xalign=0), 1, i, 1, 1)
             self.grid.show_all()
+            if not active:
+                self.add_note("No notification daemon detected. Install one of: "
+                              "swaync, mako, dunst, fnott.")
 
-        def _copy(self):
-            text = "\n".join("%s: %s" % r for r in self._rows)
-            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(text, -1)
-            self.app.toast("System info copied")
+    class SystemInfoPage(PageBase):
+        page_key = "system"
 
-    # -- window ------------------------------------------------------------
+        def build(self):
+            self.grid = Gtk.Grid(column_spacing=12, row_spacing=6)
+            frame = self.add_frame()
+            frame.add(self.grid)
+            self.rebuild()
 
-    PAGES = [
-        # name, icon, factory
-        ("Appearance", "preferences-desktop-appearance-symbolic", None),
-        ("Animations", "media-playback-start-symbolic", None),
-        ("Window behavior", "focus-windows-symbolic", None),
-        ("Layouts", "view-grid-symbolic", None),
-        ("Keybindings", "input-keyboard-symbolic", KeybindsPage),
-        ("Workspaces", "view-paged-symbolic", WorkspacesPage),
-        ("Window rules", "window-new-symbolic", WindowRulesPage),
-        ("Monitors", "preferences-desktop-display-symbolic", MonitorsPage),
-        ("Input devices", "input-touchpad-symbolic", None),
-        ("Startup apps", "system-run-symbolic", StartupPage),
-        ("Theming", "preferences-color-symbolic", ThemingPage),
-        ("Notifications", "preferences-system-notifications-symbolic", NotificationsPage),
-        ("Config files", "document-edit-symbolic", ConfigFilesPage),
-        ("System info", "dialog-information-symbolic", SystemInfoPage),
-    ]
-    assert tuple(n for n, _i, _f in PAGES) == PAGE_NAMES
+        def rebuild(self):
+            for child in self.grid.get_children():
+                self.grid.remove(child)
+            for i, (k, v) in enumerate(system_info()):
+                self.grid.attach(Gtk.Label(label=k, xalign=0), 0, i, 1, 1)
+                label = Gtk.Label(label=v, xalign=0, selectable=True)
+                label.set_selectable(True)
+                self.grid.attach(label, 1, i, 1, 1)
+            self.grid.show_all()
+            btn = Gtk.Button(label="Copy all")
+            btn.connect("clicked", self.on_copy)
+            self.content.pack_start(btn, False, False, 4)
 
-    class Prefs:
-        """Small INI file for the app's own preferences."""
+        def on_copy(self, _btn):
+            text = "\n".join("%s: %s" % kv for kv in system_info())
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clipboard.set_text(text, -1)
+            self.app.error_dialog("System info copied to clipboard.")
 
-        def __init__(self):
-            self.path = os.path.join(GLib.get_user_config_dir(), "mango-settings", "settings.ini")
-            self.kf = GLib.KeyFile()
-            try:
-                self.kf.load_from_file(self.path, GLib.KeyFileFlags.NONE)
-            except GLib.Error:
-                pass
+    # ---------------------------------------------------------------- window
+    class SettingsWindow(Gtk.ApplicationWindow):
+        PANES = ["appearance", "animations", "behavior", "layouts", "keybindings",
+                 "workspaces", "windowrules", "monitors", "input", "startup",
+                 "theming", "notifications", "files", "system"]
 
-        def get(self, key, default):
-            try:
-                if isinstance(default, int):
-                    return self.kf.get_integer("app", key)
-                return self.kf.get_string("app", key)
-            except GLib.Error:
-                return default
+        def __init__(self, app):
+            super().__init__(application=app.gtk_app,
+                             title=APP_NAME, default_width=980, default_height=680)
+            self.app = app
+            self.paned = Gtk.Paned()
+            self.add(self.paned)
 
-        def set(self, key, value):
-            if isinstance(value, int):
-                self.kf.set_integer("app", key, value)
-            else:
-                self.kf.set_string("app", key, value)
+            header = Gtk.HeaderBar(title=APP_NAME, show_close_button=True)
+            header.set_show_close_button(True)
+            self.set_titlebar(header)
+            save = Gtk.Button(label="_Save", use_underline=True)
+            save.connect("clicked", lambda *_: app.action_save())
+            header.pack_start(save)
+            reload_btn = Gtk.Button(label="Reload Mango")
+            reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
+            header.pack_start(reload_btn)
 
-        def save(self):
-            try:
-                os.makedirs(os.path.dirname(self.path), exist_ok=True)
-                self.kf.save_to_file(self.path)
-            except (GLib.Error, OSError):
-                pass
-
-    class MainWindow(Gtk.ApplicationWindow):
-
-        def __init__(self, application, tree, kind, start_page=None):
-            super().__init__(application=application, title="Mango Settings")
-            self.tree, self.kind = tree, kind
-            self.prefs = Prefs()
-            self.pending = []
-            self._toast_src = None
-            self.set_default_size(self.prefs.get("width", 1040), self.prefs.get("height", 720))
-            theme = Gtk.IconTheme.get_default()
-            self.set_icon_name(APP_ID if theme.has_icon(APP_ID) else "preferences-desktop")
-
-            provider = Gtk.CssProvider()
-            provider.load_from_data(APP_CSS)
-            Gtk.StyleContext.add_provider_for_screen(
-                Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-            self.iface = interface_settings()
-            self._build_header()
-            self._build_body()
-            self.apply_theme(self.prefs.get("theme", "system"))
-            self.connect("delete-event", self._on_close)
-            self._install_shortcuts()
-            self.show_all()
-            for bar in self.bars:
-                if not bar.revealed:
-                    bar.hide()
-            self.select_page(start_page or self.prefs.get("page", "Appearance"))
-
-        # header
-        def _build_header(self):
-            version = mango_version()
-            hb = Gtk.HeaderBar(show_close_button=True, title="Mango Settings",
-                               subtitle="MangoWM %s" % version if version != "not found"
-                               else "Settings for MangoWM")
-            hb.get_style_context().add_class("mango")
-            self.set_titlebar(hb)
-
-            reload_btn = Gtk.Button(label="Reload MangoWM")
-            reload_btn.set_tooltip_text("Apply the config now (Ctrl+R)")
-            reload_btn.connect("clicked", lambda *_: self.reload_mango())
-            hb.pack_end(reload_btn)
-
-            menu_btn = Gtk.MenuButton(image=Gtk.Image.new_from_icon_name(
-                "open-menu-symbolic", Gtk.IconSize.BUTTON))
-            menu_btn.set_tooltip_text("Menu")
-            pop = Gtk.Popover()
-            pbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
-            pbox.pack_start(dim_label("Window style", wrap=False), False, False, 2)
-            group = None
-            self.theme_radios = {}
-            for label, val in (("Follow system", "system"), ("Light", "light"), ("Dark", "dark")):
-                rb = Gtk.RadioButton.new_with_label_from_widget(group, label)
-                group = group or rb
-                rb.connect("toggled", self._on_theme_radio, val)
-                self.theme_radios[val] = rb
-                pbox.pack_start(rb, False, False, 0)
-            pbox.pack_start(Gtk.Separator(margin_top=6, margin_bottom=6), False, False, 0)
-            for label, cb in (("Open config folder", lambda: open_path(os.path.dirname(self.tree.root), self)),
-                              ("MangoWM documentation", lambda: open_path_uri(DOCS_URL)),
-                              ("Keyboard shortcuts", self._show_shortcuts),
-                              ("About Mango Settings", self._about)):
-                b = Gtk.ModelButton(text=label)
-                b.connect("clicked", lambda _b, f=cb: f())
-                pbox.pack_start(b, False, False, 0)
-            pbox.show_all()
-            pop.add(pbox)
-            menu_btn.set_popover(pop)
-            hb.pack_end(menu_btn)
-
-        # body
-        def _build_body(self):
-            outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            self.bars = []
-            self._add_banners(outer)
-
-            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-            sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            sidebar.get_style_context().add_class("sidebar")
-            sidebar.set_size_request(220, -1)
-            self.search = Gtk.SearchEntry(placeholder_text="Search settings", margin=8)
+            self.search = Gtk.SearchEntry(placeholder_text="Search pages… (Ctrl+F)")
             self.search.connect("search-changed", self.on_search)
-            sidebar.pack_start(self.search, False, False, 0)
+            header.set_custom_title(self.search)
 
-            self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE,
-                                   transition_duration=120)
-            self.stack.connect("notify::visible-child", self._on_page_shown)
-            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
-            self.listbox.connect("row-selected", self._on_row_selected)
-            self.listbox.set_filter_func(self._row_visible)
-            self.pages, self.rows = {}, {}
-            for name, icon, factory in PAGES:
-                page = factory(self) if factory else SettingsPage(self, name, CONFIG_SCHEMA[name])
-                if self.kind == "toml" and page.edits_mango_config:
-                    page.set_sensitive(False)
-                self.pages[name] = page
-                sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
-                sc.add(page)
-                self.stack.add_named(sc, name)
-                row = Gtk.ListBoxRow()
-                row.page_name = name
-                hbox = Gtk.Box(spacing=10, margin=6)
-                hbox.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU), False, False, 0)
-                hbox.pack_start(Gtk.Label(label=name, xalign=0), True, True, 0)
-                row.add(hbox)
-                self.listbox.add(row)
-                self.rows[name] = row
-            lb_sc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
-            lb_sc.add(self.listbox)
-            sidebar.pack_start(lb_sc, True, True, 0)
-            paned.pack1(sidebar, False, False)
-            paned.pack2(self.stack, True, False)
+            # sidebar
+            side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            side.set_border_width(8)
+            theme_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            theme_label = Gtk.Label(label="Theme", xalign=0)
+            self.theme_combo = Gtk.ComboBoxText()
+            for choice in ("system", "dark", "light"):
+                self.theme_combo.append_text(choice)
+            self.theme_combo.set_active(0)
+            self.theme_combo.connect("changed", app.on_theme_changed)
+            theme_box.add(theme_label); theme_box.add(self.theme_combo)
+            side.pack_start(theme_box, False, False, 2)
+            self.sidebar = Gtk.ListBox()
+            self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self.sidebar.connect("row-selected", self.on_row_selected)
+            side.pack_start(self.sidebar, True, True, 0)
+            self.paned.add1(side)
+            self.paned.set_position(200)
 
-            overlay = Gtk.Overlay()
-            overlay.add(paned)
-            self.toast_rev = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
-                                          halign=Gtk.Align.CENTER, valign=Gtk.Align.END)
-            self.toast_label = Gtk.Label(wrap=True, max_width_chars=70)
-            self.toast_label.get_style_context().add_class("toast")
-            self.toast_rev.add(self.toast_label)
-            overlay.add_overlay(self.toast_rev)
-            overlay.set_overlay_pass_through(self.toast_rev, True)
-            outer.pack_start(overlay, True, True, 0)
-            self.add(outer)
+            # stack
+            self.stack = Gtk.Stack()
+            self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
+            self.paned.add2(self.stack)
+            self.page_rows = {}
+            for key in self.PANES:
+                label = Gtk.Label(label=PAGE_TITLES[key], xalign=0.5)
+                label.set_margin_top(6); label.set_margin_bottom(6)
+                self.sidebar.add(label)
+                row = self.sidebar.get_children()[-1]
+                self.page_rows[key] = row
+            self.sidebar.select_row(self.sidebar.get_children()[0])
 
-        def _banner(self, outer, kind, text, buttons=(), on_response=None, show=True):
-            bar = Gtk.InfoBar(message_type=kind, show_close_button=True)
-            bar.get_content_area().add(Gtk.Label(label=text, wrap=True, xalign=0))
-            for label, rid in buttons:
-                bar.add_button(label, rid)
-            bar.connect("response", on_response or (lambda b, _r: b.hide()))
-            bar.revealed = show
-            outer.pack_start(bar, False, False, 0)
-            self.bars.append(bar)
-            return bar
-
-        def _add_banners(self, outer):
-            root = self.tree.root.replace(HOME, "~", 1)
-            if self.kind == "toml":
-                self._banner(outer, Gtk.MessageType.WARNING,
-                             "Your MangoWM config is in TOML format (%s). Mango Settings edits the "
-                             ".conf format only, so config pages are read-only to keep your setup "
-                             "safe. Theming, notifications and system info still work." % root)
-            elif self.kind == "new":
-                system = system_default_config()
-                text = "No MangoWM config found yet. Your settings will be saved to %s." % root
-                buttons = []
-                if system:
-                    text += " You can start from the system default config (%s)." % system
-                    buttons = [("Copy default config", 1)]
-
-                def respond(bar, rid):
-                    if rid == 1 and system:
-                        if os.path.exists(self.tree.root):
-                            self.toast("%s exists now; not overwriting it." % root, error=True)
-                            bar.hide()
-                            self.kind = "conf"
-                            self.refresh_all(force=True)
-                            return
-                        try:
-                            with open(system, "rb") as fh:
-                                text = fh.read().decode("utf-8", errors="surrogateescape")
-                            write_text(self.tree.root, text)
-                        except OSError as err:
-                            self.toast("Couldn't copy: %s" % describe_error(err), error=True)
-                            return
-                        self.kind = "conf"
-                        self.refresh_all(force=True)
-                        self.toast("Copied %s" % system)
-                    bar.hide()
-                self._banner(outer, Gtk.MessageType.INFO, text, buttons, respond)
-
-        # pages
-        def _row_visible(self, row):
-            q = self.search.get_text().strip().lower()
-            return not q or self.pages[row.page_name].matches(q)
+        def on_row_selected(self, _box, row):
+            if row is None:
+                return
+            children = list(self.sidebar.get_children())
+            key = self.PANES[children.index(row)]
+            child = self.stack.get_child_by_name(key)
+            if child is not None:
+                self.stack.remove(child)
+            page = self.app.make_page(key)
+            self.stack.add_named(page, key)
+            self.stack.set_visible_child_name(key)
 
         def on_search(self, entry):
-            q = entry.get_text().strip().lower()
-            self.listbox.invalidate_filter()
-            for page in self.pages.values():
-                page.filter(q)
-            sel = self.listbox.get_selected_row()
-            if q and (sel is None or not self._row_visible(sel)):
-                for name, _i, _f in PAGES:
-                    if self._row_visible(self.rows[name]):
-                        self.listbox.select_row(self.rows[name])
-                        break
+            needle = entry.get_text().lower().strip()
+            for key, row in self.page_rows.items():
+                row.set_visible(not needle or needle in PAGE_TITLES[key].lower())
 
-        def _on_row_selected(self, _lb, row):
-            if row is not None:
-                self.stack.set_visible_child_name(row.page_name)
+        def current_key(self):
+            children = list(self.sidebar.get_children())
+            row = self.sidebar.get_selected_row()
+            return self.PANES[children.index(row)] if row else None
 
-        def _on_page_shown(self, *_):
-            name = self.stack.get_visible_child_name()
-            if name:
-                self.pages[name].refresh()
+        def goto(self, key):
+            if key in self.page_rows:
+                self.sidebar.select_row(self.page_rows[key])
 
-        def select_page(self, name):
-            match = next((n for n, _i, _f in PAGES if n.lower() == str(name).lower()), "Appearance")
-            self.listbox.select_row(self.rows[match])
-
-        def current_page(self):
-            return self.pages.get(self.stack.get_visible_child_name())
-
-        def refresh_all(self, force=False):
-            for page in self.pages.values():
-                if self.kind != "toml" or not page.edits_mango_config:
-                    page.set_sensitive(True)
-                page.refresh(force) if isinstance(page, RuleListPage) else page.refresh()
-
-        # feedback
-        def toast(self, msg, error=False):
-            ctx = self.toast_label.get_style_context()
-            (ctx.add_class if error else ctx.remove_class)("error")
-            self.toast_label.set_text(msg)
-            self.toast_rev.set_reveal_child(True)
-            if self._toast_src:
-                GLib.source_remove(self._toast_src)
-
-            def hide():
-                self._toast_src = None
-                self.toast_rev.set_reveal_child(False)
-                return False
-            self._toast_src = GLib.timeout_add(4500 if error else 3000, hide)
-
-        def saved(self, filename, msg=None):
-            auto = parse_bool(self.tree.get("auto_reload_config", "1"), 1)
-            msg = msg or "Saved to %s" % filename
-            self.toast(msg + (" — MangoWM reloads it automatically" if auto
-                              else " — press Reload MangoWM to apply"))
-
-        def reload_mango(self):
-            if not shutil.which("mmsg"):
-                self.toast("mmsg not found — it ships with MangoWM. You can also press SUPER+R.",
-                           error=True)
-                return
-
-            def done(ok, out):
-                self.toast("MangoWM reloaded" if ok else "Reload failed: %s" % (out or "is MangoWM running?"),
-                           error=not ok)
-            run_async(["mmsg", "dispatch", "reload_config"], done)
-
-        # theme
-        def _on_theme_radio(self, rb, mode):
-            if rb.get_active():
-                self.apply_theme(mode)
-
-        def apply_theme(self, mode):
-            if mode not in ("system", "light", "dark"):
-                mode = "system"
-            self.theme_mode = mode
-            rb = self.theme_radios[mode]
-            if not rb.get_active():
-                rb.set_active(True)
-            self.prefs.set("theme", mode)
-            settings = Gtk.Settings.get_default()
-            sys_theme = self.iface[0].get_string("gtk-theme") if self.iface else "Adwaita"
-            installed = gtk_themes()
-            if sys_theme not in installed:
-                sys_theme = "Adwaita"  # GTK falls back to this anyway
-            base = re.sub(r"[-_]dark$", "", sys_theme, flags=re.I)
-            if base not in installed:
-                base = "Adwaita"
-            if mode == "system":
-                scheme = ""
-                if self.iface and self.iface[1].has_key("color-scheme"):
-                    scheme = self.iface[0].get_string("color-scheme")
-                dark = scheme == "prefer-dark" or "dark" in sys_theme.lower()
-                name = sys_theme
-            elif mode == "dark":
-                # "<theme>-dark" if it exists as its own theme, else the built-in
-                # dark variant selected through prefer-dark (Adwaita has one).
-                dark = True
-                name = base + "-dark" if base + "-dark" in installed else base
-            else:
-                dark = False
-                name = base
-            settings.set_property("gtk-theme-name", name)
-            settings.set_property("gtk-application-prefer-dark-theme", dark)
-            if self.iface and not getattr(self, "_iface_watch", None):
-                self._iface_watch = self.iface[0].connect(
-                    "changed", lambda _s, key: key in ("gtk-theme", "color-scheme")
-                    and self.theme_mode == "system" and self.apply_theme("system"))
-
-        # shortcuts and dialogs
-        def _install_shortcuts(self):
-            accel = Gtk.AccelGroup()
-            self.add_accel_group(accel)
-
-            def bind(accel_str, fn):
-                key, mods = Gtk.accelerator_parse(accel_str)
-                accel.connect(key, mods, Gtk.AccelFlags.VISIBLE, lambda *_: (fn(), True)[1])
-            bind("<Control>f", lambda: self.search.grab_focus())
-            bind("<Control>r", self.reload_mango)
-            bind("<Control>s", self._save_current)
-            bind("<Control>q", lambda: self.close())
-
-        def _save_current(self):
-            page = self.current_page()
-            if page is not None and hasattr(page, "save"):
-                page.save()
-
-        def _show_shortcuts(self):
-            dlg = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.CLOSE,
-                                    text="Keyboard shortcuts")
-            dlg.format_secondary_markup(
-                "<b>Ctrl+F</b>  search settings\n<b>Ctrl+S</b>  save the current page\n"
-                "<b>Ctrl+R</b>  reload MangoWM\n<b>Ctrl+Q</b>  quit")
-            dlg.run()
-            dlg.destroy()
-
-        def _about(self):
-            dlg = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Mango Settings",
-                                  version=__version__, website=REPO_URL,
-                                  comments="A settings manager for the MangoWM Wayland compositor.",
-                                  license_type=Gtk.License.MIT_X11,
-                                  authors=["Harikesh Verma (code-smith404)"],
-                                  logo_icon_name=self.get_icon_name())
-            dlg.run()
-            dlg.destroy()
-
-        def _on_close(self, *_):
-            for d in self.pending:
-                d.flush()
-            dirty = [p for p in self.pages.values() if p.is_dirty()]
-            if dirty:
-                dlg = Gtk.MessageDialog(transient_for=self, modal=True,
-                                        message_type=Gtk.MessageType.QUESTION,
-                                        text="Save changes before closing?")
-                dlg.format_secondary_text("Unsaved changes on: %s" % ", ".join(p.title for p in dirty))
-                dlg.add_buttons("Discard", Gtk.ResponseType.NO, "Cancel", Gtk.ResponseType.CANCEL,
-                                "Save", Gtk.ResponseType.YES)
-                resp = dlg.run()
-                dlg.destroy()
-                if resp == Gtk.ResponseType.CANCEL or resp == Gtk.ResponseType.DELETE_EVENT:
-                    return True
-                if resp == Gtk.ResponseType.YES and not all(p.save() for p in dirty):
-                    return True
-            if not self.is_maximized():
-                w, h = self.get_size()
-                self.prefs.set("width", w)
-                self.prefs.set("height", h)
-            self.prefs.set("page", self.stack.get_visible_child_name() or "Appearance")
-            self.prefs.save()
-            return False
-
-    def open_path_uri(uri):
-        try:
-            Gio.AppInfo.launch_default_for_uri(uri, None)
-        except GLib.Error:
-            if shutil.which("xdg-open"):
-                subprocess.Popen(["xdg-open", uri])
-
-    class MangoSettingsApp(Gtk.Application):
+    # ------------------------------------------------------------------ app
+    class MangoApp(object):
         def __init__(self, args):
-            super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
             self.args = args
             self.window = None
+            self.config = None
+            self._rule_files = {}
+            self.settings_ini = os.path.expanduser(APP_SETTINGS_FILE)
 
-        def do_activate(self):
-            if self.window is None:
-                root, kind = detect_root_config(self.args.config)
-                self.window = MainWindow(self, ConfigTree(root), kind, self.args.page)
-            self.window.present()
+        # -- wiring ---------------------------------------------------------
+        def run(self):
+            self.gtk_app = Gtk.Application(application_id=APP_ID,
+                                           flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.gtk_app.connect("activate", self.on_activate)
+            self.gtk_app.register(None)
+            self.gtk_app.run([])
+            return 0
+
+        def on_activate(self, *_a):
+            self.load_config()
+            self.window = SettingsWindow(self)
+            self.gtk_app.add_window(self.window)
+            self._install_accelerators()
+            self.window.show_all()
+            self.apply_theme(self.read_theme_pref())
+            self.window.theme_combo.handler_block_by_func(self.on_theme_changed)
+            self.window.theme_combo.set_active(
+                ["system", "dark", "light"].index(self.read_theme_pref()))
+            self.window.theme_combo.handler_unblock_by_func(self.on_theme_changed)
+            if self.args.page:
+                self.window.goto(self.args.page)
+            if not self.config.exists:
+                self.offer_default_config()
+
+        def _install_accelerators(self):
+            actions = {
+                "save": ("save", ["<Ctrl>s"], self.action_save),
+                "reload-mango": ("reload-mango", ["<Ctrl>r"], self.action_reload_mango),
+                "quit-app": ("quit-app", ["<Ctrl>q"], self.action_quit),
+                "find": ("find", ["<Ctrl>f"], self.action_find),
+            }
+            self.win_actions = {}
+            for name, (label, accels, handler) in actions.items():
+                act = Gio.SimpleAction.new(label, None)
+                act.connect("activate", lambda a, p, h=handler: h())
+                self.window.add_action(act)
+                self.window.set_accels_for_action("win." + label, accels)
+                self.win_actions[label] = act
+
+        # -- config plumbing ---------------------------------------------------
+        def load_config(self):
+            self.config = MangoConfig(root=self.args.config)
+            self.config.load()
+            self._rule_files = {}
+
+        def rule_file(self, which):
+            if which in self._rule_files:
+                return self._rule_files[which]
+            paths = {"bind": DEFAULT_BIND_PATH, "rule": DEFAULT_RULE_PATH,
+                     "monitor": DEFAULT_MONITOR_PATH,
+                     "config": self.config.root_path}
+            if which == "config":
+                rf = RuleFile(self.config.root_path)
+                rf.exists = self.config.exists
+                rf.load() if self.config.exists else None
+            else:
+                rf = RuleFile(paths[which])
+                if not rf.exists:
+                    rf.raw_lines = []
+                    _add_issue(self.config.issues, Issue.WARNING,
+                               "%s not found (using an in-memory copy; it is created "
+                               "on first edit)" % paths[which])
+            self._rule_files[which] = rf
+            return rf
+
+        def make_page(self, key):
+            if key in ("appearance", "animations", "behavior", "layouts", "input"):
+                return SchemaPage(self, key)
+            return {
+                "keybindings": KeybindsPage, "workspaces": WorkspacesPage,
+                "windowrules": WindowRulesPage, "monitors": MonitorsPage,
+                "startup": StartupPage, "theming": ThemingPage,
+                "notifications": NotificationsPage, "files": ConfigFilesPage,
+                "system": SystemInfoPage,
+            }[key](self)
+
+        def on_page_changed(self, page):
+            pass  # pages self-save or save on Ctrl+S
+
+        def reload_config(self):
+            self.load_config()
+            if self.window:
+                self.window.queue_draw()
+
+        def offer_default_config(self):
+            default = "/usr/share/mango/config.conf"
+            dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                    message_type=Gtk.MessageType.QUESTION,
+                                    text="No MangoWM config found")
+            dlg.format_secondary_text(
+                "There is no config at %s yet. Copy MangoWM's default config "
+                "now, or start with an empty one?" % os.path.expanduser(DEFAULT_CONFIG_PATH))
+            dlg.add_buttons("Start empty", Gtk.ResponseType.REJECT,
+                            "Copy default", Gtk.ResponseType.ACCEPT, "_Quit", Gtk.ResponseType.CLOSE)
+            resp = dlg.run(); dlg.destroy()
+            if resp == Gtk.ResponseType.CLOSE:
+                self.action_quit(); return
+            if resp == Gtk.ResponseType.ACCEPT and os.path.exists(default):
+                os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+                shutil.copy2(default, self.config.root_path)
+            elif resp == Gtk.ResponseType.ACCEPT:
+                self.error_dialog("Default config not found at %s — starting empty. "
+                                  "MangoWM's defaults will be used until you save."
+                                  % default)
+                return
+            else:
+                os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+                open(self.config.root_path, "a").close()
+            self.load_config()
+
+        # -- actions ------------------------------------------------------------
+        def action_save(self, *_a):
+            errors_before = len([i for i in self.config.issues if i.severity == Issue.ERROR])
+            try:
+                saved = self.config.save()
+                for rf in self._rule_files.values():
+                    rf.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            for key in self.window.PANES:
+                child = self.window.stack.get_child_by_name(key)
+                if child is not None:
+                    child.clear_dirty()
+            self.error_dialog("Saved %d file(s)." % (len(saved) +
+                             sum(1 for rf in self._rule_files.values() if rf.dirty)),
+                              error=False)
+            self.load_config()
+
+        def action_reload_mango(self, *_a):
+            try:
+                self.config.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc)); return
+            ok, message = reload_mango()
+            if ok:
+                self.error_dialog("MangoWM reloaded.", error=False)
+            else:
+                self.error_dialog("Reload failed: %s" % message)
+
+        def action_quit(self, *_a):
+            dirty = []
+            if self.config:
+                dirty = self.config.changed_files()
+                dirty += [rf for rf in self._rule_files.values() if rf.dirty]
+            if dirty:
+                dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                        message_type=Gtk.MessageType.WARNING,
+                                        text="Save unsaved changes before quitting?")
+                dlg.add_buttons("_Discard", Gtk.ResponseType.REJECT,
+                                "_Save", Gtk.ResponseType.ACCEPT, "_Cancel", Gtk.ResponseType.CANCEL)
+                resp = dlg.run(); dlg.destroy()
+                if resp == Gtk.ResponseType.CANCEL:
+                    return
+                if resp == Gtk.ResponseType.ACCEPT:
+                    self.action_save()
+            self.gtk_app.quit()
+
+        def action_find(self, *_a):
+            self.window.search.grab_focus()
+
+        # -- dialogs / theme ----------------------------------------------------
+        def error_dialog(self, message, error=True):
+            dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                    message_type=Gtk.MessageType.ERROR if error
+                                    else Gtk.MessageType.INFO,
+                                    buttons=Gtk.ButtonsType.OK,
+                                    text=message[:400])
+            dlg.run(); dlg.destroy()
+
+        def warning_in_dialog(self, dlg, message):
+            dlg.get_content_area().pack_start(
+                Gtk.Label(label=message), False, False, 4)
+            dlg.show_all()
+
+        def read_theme_pref(self):
+            try:
+                import configparser
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                val = cp.get("ui", "theme", fallback="system")
+                return val if val in ("system", "dark", "light") else "system"
+            except Exception:
+                return "system"
+
+        def write_theme_pref(self, theme):
+            try:
+                import configparser
+                os.makedirs(os.path.dirname(self.settings_ini), exist_ok=True)
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                if not cp.has_section("ui"):
+                    cp.add_section("ui")
+                cp.set("ui", "theme", theme)
+                with open(self.settings_ini, "w") as fh:
+                    cp.write(fh)
+            except OSError:
+                pass
+
+        def on_theme_changed(self, combo):
+            theme = combo.get_active_text()
+            if theme:
+                self.apply_theme(theme)
+                self.write_theme_pref(theme)
+
+        def apply_theme(self, theme):
+            prefer_dark = theme == "dark" or (theme == "system" and
+                          (gsettings_get(GTK_THEME_SCHEMA, "color-scheme") == "prefer-dark"))
+            Gtk.Settings.get_default().set_property(
+                "gtk-application-prefer-dark-theme", bool(prefer_dark))
+
+    app = MangoApp(args)
+    return app.run()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+def cmd_check(config):
+    """Headless validation: prints include problems; exit 1 on errors."""
+    config.load()
+    errors, warnings = config.summary()
+    for issue in warnings + errors:
+        print(issue)
+    print("Config: %s — %d file(s) loaded, %d error(s), %d warning(s)"
+          % (config.root_path, len(config.order), len(errors), len(warnings)))
+    return 1 if errors else 0
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="mango-settings", description="Settings manager for MangoWM")
+    parser.add_argument("--page", metavar="PAGE",
+                        help="open a specific page (see --list-pages)")
+    parser.add_argument("--config", metavar="FILE",
+                        help="config file to edit (default: %s)" % DEFAULT_CONFIG_PATH)
+    parser.add_argument("--check", action="store_true",
+                        help="validate the config and exit (no GUI)")
+    parser.add_argument("--list-pages", action="store_true",
+                        help="list page names and exit")
+    parser.add_argument("--version", action="store_true",
+                        help="print version and exit")
+    return parser
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="mango-settings",
-                                     description="Settings manager for MangoWM.")
-    parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
-    parser.add_argument("--page", help="open a specific page, e.g. Keybindings")
-    parser.add_argument("--config", help="use another root config file (like `mango -c`)")
-    parser.add_argument("--list-pages", action="store_true", help="print page names and exit")
-    parser.add_argument("--check", action="store_true",
-                        help="list the config files MangoWM loads, report missing includes "
-                             "and include loops, and exit (no GUI needed)")
+    parser = build_parser()
     args = parser.parse_args(argv)
-    if args.list_pages:
-        print("\n".join(PAGE_NAMES))
+
+    if args.version:
+        print("%s %s" % (APP_NAME, VERSION))
         return 0
+    if args.list_pages:
+        for key in PAGE_ORDER:
+            print(PAGE_TITLES[key])
+        return 0
+    if args.page and args.page not in PAGE_ORDER:
+        sys.stderr.write("Unknown page %r. Valid pages:\n%s\n" %
+                         (args.page, "\n".join("  " + PAGE_TITLES[k] for k in PAGE_ORDER)))
+        return 2
     if args.check:
-        return check_config(detect_root_config(args.config)[0])
-    if not HAVE_GTK:
-        sys.stderr.write(
-            "Mango Settings needs PyGObject with GTK 3, which this Python (%s) can't "
-            "import: %s\n"
-            "  Arch/Manjaro:  sudo pacman -S python-gobject gtk3\n"
-            "  Debian/Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0\n"
-            "  Fedora:        sudo dnf install python3-gobject gtk3\n"
-            "  openSUSE:      sudo zypper install python3-gobject python3-gobject-Gdk "
-            "typelib-1_0-Gtk-3_0\n"
-            "  Void:          sudo xbps-install python3-gobject gtk+3\n"
-            "  Alpine:        sudo apk add py3-gobject3 gtk+3.0\n"
-            "  NixOS:         nix run github:code-smith404/MangoWM-Settings\n"
-            "If they are installed, you may be running a different Python (a venv, "
-            "pyenv or conda); start it with /usr/bin/python3 instead.\n"
-            % (sys.executable, GTK_ERROR))
-        return 1
-    if Gdk.Display.get_default() is None:
-        sys.stderr.write("Mango Settings can't open a display. Start it from inside your "
-                         "MangoWM session (WAYLAND_DISPLAY or DISPLAY must be set).\n")
-        return 1
-    GLib.set_application_name("Mango Settings")
-    GLib.set_prgname("mango-settings")
-    return MangoSettingsApp(args).run([sys.argv[0]])
+        return cmd_check(MangoConfig(root=args.config))
+    return run_gui(args)
 
 
 if __name__ == "__main__":

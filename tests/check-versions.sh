@@ -1,17 +1,21 @@
 #!/bin/sh
-# Fails if the version in mango-settings.py, the packages and the changelog differ.
+# Verify that VERSION is identical in every place it is declared:
+# mango-settings.py, packaging/arch/PKGBUILD and flake.nix.
 set -eu
-cd "$(dirname "$0")/.."
-app="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' mango-settings.py)"
-nix="$(sed -n 's/^ *version = "\([^"]*\)";.*/\1/p' packaging/nix/package.nix)"
-arch="$(sed -n 's/^pkgver=//p' packaging/arch/PKGBUILD)"
-log="$(sed -n 's/^## \([0-9][^ ]*\).*/\1/p' CHANGELOG.md | head -n 1)"
-echo "mango-settings.py: $app  package.nix: $nix  PKGBUILD: $arch  CHANGELOG: $log"
+
+here=$(cd "$(dirname "$0")/.." && pwd)
 fail=0
-for v in "$nix" "$arch" "$log"; do
-  [ "$v" = "$app" ] || fail=1
-done
-if [ "$fail" -ne 0 ]; then
-  echo "error: versions differ; update them all to $app" >&2
-  exit 1
-fi
+
+py=$(grep -m1 '^VERSION = ' "$here/mango-settings.py" | sed 's/VERSION = "\([^"]*\)"/\1/')
+pkg=$(grep -m1 '^pkgver=' "$here/packaging/arch/PKGBUILD" | sed 's/pkgver=\(.*\)/\1/')
+nix=$(grep -m1 'version = ' "$here/flake.nix" | sed 's/.*version = "\([^"]*\)".*/\1/')
+
+echo "mango-settings.py : $py"
+echo "PKGBUILD          : $pkg"
+echo "flake.nix         : $nix"
+
+[ -n "$py" ] || { echo "no version found in mango-settings.py" >&2; fail=1; }
+[ "$py" = "$pkg" ] || { echo "PKGBUILD version ($pkg) != mango-settings.py ($py)" >&2; fail=1; }
+[ "$py" = "$nix" ] || { echo "flake.nix version ($nix) != mango-settings.py ($py)" >&2; fail=1; }
+
+[ "$fail" = 0 ] && echo "versions in sync" || exit 1

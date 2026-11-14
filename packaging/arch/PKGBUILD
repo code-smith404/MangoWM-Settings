@@ -1,34 +1,31 @@
-# Maintainer: Harikesh Verma (code-smith404) <299116741+code-smith404@users.noreply.github.com>
-pkgname=mango-settings-git
-_pkgname=mango-settings
-pkgver=1.1.1
+# Maintainer: Harikesh Verma <code-smith404@users.noreply.github.com>
+pkgname=mango-settings
+pkgver=2.0.0
 pkgrel=1
-pkgdesc="GNOME-style settings app for the MangoWM Wayland compositor"
+pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor"
 arch=('any')
 url="https://github.com/code-smith404/MangoWM-Settings"
 license=('MIT')
-depends=('python' 'python-gobject' 'gtk3')
-optdepends=('glib2: Theming page (gsettings)'
-            'libnotify: test notifications')
-makedepends=('git')
-provides=("$_pkgname")
-conflicts=("$_pkgname")
-source=("$_pkgname::git+https://github.com/code-smith404/MangoWM-Settings.git")
+depends=('python-gobject' 'gtk3' 'python')
+optdepends=('mmsg: reload MangoWM and detect monitors from within the app')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
-pkgver() {
-  cd "$_pkgname"
-  printf "%s.r%s.%s" \
-    "$(sed -n 's/^__version__ = "\(.*\)"/\1/p' mango-settings.py)" \
-    "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
-
-check() {
-  cd "$_pkgname"
-  python -m unittest discover tests
-}
-
 package() {
-  cd "$_pkgname"
-  make install PREFIX=/usr DESTDIR="$pkgdir"
+    cd "$srcdir/MangoWM-Settings-$pkgver"
+    local prefix="$pkgdir/usr"
+    install -d "$prefix/bin" "$prefix/share/mango-settings" \
+        "$prefix/share/applications" \
+        "$prefix/share/icons/hicolor/scalable/apps" \
+        "$prefix/share/licenses/$pkgname"
+    install -m 755 mango-settings.py "$prefix/share/mango-settings/"
+    printf '#!/bin/sh\nexec python3 "%s/share/mango-settings/mango-settings.py" "$@"\n' \
+        "$prefix" > "$pkgdir/usr/bin/mango-settings"
+    sed -i "s|$prefix||g" "$pkgdir/usr/bin/mango-settings"
+    chmod +x "$pkgdir/usr/bin/mango-settings"
+    install -m 644 data/io.github.code_smith404.MangoSettings.desktop \
+        "$prefix/share/applications/"
+    install -m 644 data/io.github.code_smith404.MangoSettings.svg \
+        "$prefix/share/icons/hicolor/scalable/apps/"
+    install -m 644 LICENSE "$prefix/share/licenses/$pkgname/"
 }

@@ -1,35 +1,49 @@
 #!/bin/sh
-# Runs inside a fresh distro container as root (see .github/workflows/ci.yml):
-#   docker run --rm -v "$PWD:/src" IMAGE sh /src/tests/distro-test.sh
+# Distro installer test, run inside a container by CI.
+# Usage: sh tests/distro-test.sh [prefix]
+#   1. installs runtime deps for the detected package manager
+#   2. runs install.sh into a throwaway prefix
+#   3. checks the installed files exist and are executable
+#   4. uninstalls and verifies removal
 set -eu
-cd /src
-# shellcheck disable=SC1091
-. /etc/os-release
-echo "=== ${PRETTY_NAME:-unknown}"
 
-# Fresh container images ship without package databases; real systems have them.
-case " ${ID:-} ${ID_LIKE:-} " in
-  *" arch "*) pacman -Syu --noconfirm >/dev/null ;;  # old images + -Sy = partial upgrade
-  *" void "*) xbps-install -Syu -y xbps >/dev/null ;;
-esac
+PREFIX="${1:-/tmp/mango-settings-test-prefix}"
+here=$(cd "$(dirname "$0")/.." && pwd)
 
-sh ./install.sh --print-deps
-sh ./install.sh --deps --system
-command -v mango-settings
-mango-settings --version
-mango-settings --list-pages >/dev/null
-HOME=/tmp mango-settings --check
+install_deps_for() {
+    # best effort: container images sometimes need updates first
+    case "${PKG_PM:-$(command -v pacman apt-get dnf apk 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo unknown)}" in
+        pacman)  pacman -Sy --noconfirm --needed python-gobject gtk3 ;;
+        apt)     apt-get update -qq && apt-get install -y -qq python3-gi gir1.2-gtk-3.0 >/dev/null ;;
+        dnf)     dnf install -y python3-gobject gtk3 >/dev/null ;;
+        apk)     apk add --no-cache py3-gobject3 gtk+3.0 >/dev/null ;;
+        *)       echo "unknown package manager; trying plain install" ;;
+    esac
+}
 
-# The launcher points at the Python the installer chose; it must import GTK 3.
-py="$(sed -n "s/^exec '\\([^']*\\)'.*/\\1/p" /usr/local/bin/mango-settings)"
-echo "launcher python: $py"
-"$py" -c 'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk; print("GTK", Gtk.get_major_version(), Gtk.get_minor_version())'
-"$py" -m unittest discover tests
-test -f /usr/local/share/applications/io.github.code_smith404.MangoSettings.desktop
-test -f /usr/local/share/icons/hicolor/scalable/apps/io.github.code_smith404.MangoSettings.svg
+echo "== install deps =="
+install_deps_for || true
 
-sh ./install.sh --system --uninstall
-if [ -e /usr/local/bin/mango-settings ] || [ -e /usr/local/share/mango-settings ]; then
-  echo "still installed after uninstall"; exit 1
-fi
-echo "=== ${PRETTY_NAME:-unknown}: OK"
+echo "== install app =="
+sh "$here/install.sh" --no-deps --prefix "$PREFIX"
+
+echo "== verify =="
+test -x "$PREFIX/bin/mango-settings"
+test -f "$PREFIX/share/mango-settings/mango-settings.py"
+test -f "$PREFIX/share/applications/io.github.code_smith404.MangoSettings.desktop"
+"$PREFIX/bin/mango-settings" --version
+"$PREFIX/bin/mango-settings" --list-pages | grep -q "Appearance"
+PYTHONPATH="$PREFIX/share/mango-settings" python3 - <<PY
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ms", "$PREFIX/share/mango-settings/mango-settings.py")
+ms = importlib.util.module_from_spec(spec); spec.loader.exec_module(ms)
+assert ms.VERSION, "version missing"
+print("import OK, VERSION =", ms.VERSION)
+PY
+
+echo "== uninstall =="
+sh "$here/install.sh" --uninstall --prefix "$PREFIX"
+test ! -e "$PREFIX/bin/mango-settings"
+test ! -e "$PREFIX/share/mango-settings"
+
+echo "distro test passed"

@@ -1,4 +1,8 @@
 __pycache__/
-*.pyc
-*.bak
-.venv/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+tests/__pycache__/
+*.tar.gz
+result
