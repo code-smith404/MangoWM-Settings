@@ -1,6 +1,6 @@
 # Maintainer: Harikesh Verma <code-smith404@users.noreply.github.com>
 pkgname=mango-settings
-pkgver=2.0.0
+pkgver=2.1.0
 pkgrel=1
 pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor"
 arch=('any')

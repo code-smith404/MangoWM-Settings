@@ -189,40 +189,40 @@ class IncludeTests(TempHomeTestCase):
 
 class ValidationTests(TempHomeTestCase):
     def test_newline_refused(self):
-        self.write("config.conf", "gaps_in = 8\n")
+        self.write("config.conf", "gap_inner_horizontal = 8\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("gaps_in", "8\n9")
+            cfg.set("gap_inner_horizontal", "8\n9")
 
     def test_overlong_value_refused(self):
-        self.write("config.conf", "gaps_in = 8\n")
+        self.write("config.conf", "gap_inner_horizontal = 8\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("gaps_in", "x" * 256)
+            cfg.set("gap_inner_horizontal", "x" * 256)
 
     def test_int_range_checked(self):
-        self.write("config.conf", "gaps_in = 8\n")
+        self.write("config.conf", "gap_inner_horizontal = 8\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("gaps_in", "99999")
+            cfg.set("gap_inner_horizontal", "99999")
 
     def test_bool_checked(self):
-        self.write("config.conf", "shadow_enabled = 1\n")
+        self.write("config.conf", "shadows = 1\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("shadow_enabled", "yes")
+            cfg.set("shadows", "yes")
 
     def test_choice_checked(self):
-        self.write("config.conf", "layout = tile\n")
+        self.write("config.conf", "animation_type_open = slide\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("layout", "bspwm")
+            cfg.set("animation_type_open", "bspwm")
 
     def test_float_checked(self):
-        self.write("config.conf", "master_factor = 0.55\n")
+        self.write("config.conf", "default_master_factor = 0.55\n")
         cfg = engine(); cfg.load()
         with self.assertRaises(ms.ConfigError):
-            cfg.set("master_factor", "abc")
+            cfg.set("default_master_factor", "abc")
 
     def test_unknown_key_passes_through(self):
         self.write("config.conf", "")
@@ -408,6 +408,87 @@ class SchemaTests(unittest.TestCase):
     def test_multi_keys_flagged(self):
         self.assertIn("exec", ms.MULTI_KEYS)
         self.assertIn("exec_once", ms.MULTI_KEYS)
+
+
+class WallpaperTests(TempHomeTestCase):
+    """set_autostart_wallpaper: replaces/appends the wallpaper line safely."""
+
+    def autostart(self, text):
+        path = os.path.join(self.cfgdir, "autostart.sh")
+        with open(path, "w", newline="") as fh:
+            fh.write(text)
+        return path
+
+    def read(self, path):
+        with open(path, newline="") as fh:
+            return fh.read()
+
+    def test_replaces_existing_swaybg_line(self):
+        path = self.autostart("# comment\nswaybg -i ~/old.png -m fill &\nwaybar &\n")
+        ok, msg = ms.set_autostart_wallpaper("~/new.png", "fit")
+        self.assertTrue(ok, msg)
+        text = self.read(path)
+        self.assertIn("swaybg -i ~/new.png -m fit", text)
+        self.assertNotIn("old.png", text)
+        self.assertIn("waybar &", text)
+        self.assertTrue(text.startswith("# comment\n"))
+
+    def test_appends_when_no_wallpaper_line(self):
+        path = self.autostart("#!/bin/bash\nwaybar &\n")
+        ok, _ = ms.set_autostart_wallpaper("~/pic/wall.png", "fill")
+        self.assertTrue(ok)
+        text = self.read(path)
+        self.assertIn("waybar &\n", text)
+        self.assertIn("swaybg -i ~/pic/wall.png", text)
+        self.assertIn("managed by Mango Settings", text)
+
+    def test_replaces_swww_line(self):
+        path = self.autostart("swww img ~/old.png &\n")
+        ok, _ = ms.set_autostart_wallpaper("~/new.png", "fill")
+        self.assertTrue(ok)
+        text = self.read(path)
+        self.assertNotIn("swww", text)
+        self.assertIn("swaybg", text)
+
+    def test_missing_autostart_refused(self):
+        ok, msg = ms.set_autostart_wallpaper("~/x.png", "fill")
+        self.assertFalse(ok)
+        self.assertIn("not found", msg)
+
+    def test_backup_created_and_permissions_kept(self):
+        path = self.autostart("swaybg -i ~/old.png &\n")
+        os.chmod(path, 0o755)
+        ok, _ = ms.set_autostart_wallpaper("~/new.png", "fill")
+        self.assertTrue(ok)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode) & 0o777, 0o755)
+        backups = os.path.join(os.environ["HOME"], ".cache", "mango-settings",
+                               "backups")
+        found = [os.path.join(backups, bd, "autostart.sh")
+                 for bd in os.listdir(backups)
+                 if os.path.isfile(os.path.join(backups, bd, "autostart.sh"))]
+        self.assertTrue(found, "no backup of autostart.sh was made")
+        self.assertIn("old.png", self.read(found[0]))
+
+    def test_line_feed_without_final_newline(self):
+        path = self.autostart("waybar &")   # no trailing newline
+        ok, _ = ms.set_autostart_wallpaper("~/new.png", "fill")
+        self.assertTrue(ok)
+        text = self.read(path)
+        self.assertIn("waybar &\n\n# wallpaper", text)
+
+    def test_commented_wallpaper_line_not_replaced(self):
+        path = self.autostart("# swaybg -i ~/old.png &\nwaybar &\n")
+        ok, _ = ms.set_autostart_wallpaper("~/new.png", "fill")
+        self.assertTrue(ok)
+        text = self.read(path)
+        # The commented example stays untouched; a managed line is appended.
+        self.assertIn("# swaybg -i ~/old.png &", text)
+        self.assertIn("-i ~/new.png", text)
+
+    def test_apply_wallpaper_missing_file(self):
+        ok, msg = ms.apply_wallpaper("~/does-not-exist.png", "fill")
+        self.assertFalse(ok)
+        self.assertIn("No such image", msg)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.0 — title-bar-free UI, background changer, real MangoWM keys
+
+- **No title bar**: the header bar is gone. Page search, app theme and the
+  Save / Reload Mango / Quit controls now live in the sidebar.
+- **New Background page**: pick any image and set it as the wallpaper live
+  via swaybg (or swww/feh when swaybg is missing), with fit mode
+  (fill/fit/stretch/tile/center), preview, and persistence by rewriting the
+  wallpaper line in `~/.config/mango/autostart.sh` (backed up first;
+  comments/ordering preserved; a managed line is appended when none exists).
+- **Schema corrected to MangoWM's real option keys** — the previous schema
+  wrote Hyprland-style keys (`gaps_in`, `col_active_border`, …) that MangoWM
+  ignores. Keys, defaults and ranges now come from MangoWM's
+  `option_defs.c` and default `config.conf`: appearance (gaps, borders,
+  opacity, blur, shadows), animations (types, durations, fades, curves),
+  window behavior (focus, snap, drag, scratchpads), layouts (master-stack,
+  scroller, dwindle, monocle/deck) and input (keyboard, cursor, trackpad,
+  mouse). Options are grouped into titled sections per page.
+- 8 new unit tests for the wallpaper persistence engine (56 total).
+
 ## 2.0.0 — full rewrite
 
 Fresh, production rewrite of Mango Settings:

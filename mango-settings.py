@@ -20,8 +20,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -29,6 +30,7 @@ DEFAULT_CONFIG_PATH = "~/.config/mango/config.conf"
 DEFAULT_BIND_PATH = "~/.config/mango/bind.conf"
 DEFAULT_RULE_PATH = "~/.config/mango/rule.conf"
 DEFAULT_MONITOR_PATH = "~/.config/mango/monitor.conf"
+DEFAULT_AUTOSTART_PATH = "~/.config/mango/autostart.sh"
 
 CACHE_ROOT = "~/.cache/mango-settings"
 BACKUP_ROOT = os.path.join(CACHE_ROOT, "backups")
@@ -37,7 +39,12 @@ APP_SETTINGS_FILE = os.path.join("~/.config", "mango-settings", "settings.ini")
 MAX_INCLUDE_DEPTH = 32
 MAX_VALUE_LENGTH = 255          # MangoWM refuses longer values
 CHOICE_ANIMATIONS = ["none", "fade", "slide", "zoom"]
-CHOICE_LAYOUTS = ["tile", "scroller", "dwindle", "circle"]
+# Layout names accepted by MangoWM (see src/layout/arrange.c in mango).
+CHOICE_LAYOUTS = ["tile", "scroller", "grid", "deck", "monocle", "center_tile",
+                  "right_tile", "vertical_tile", "vertical_scroller",
+                  "vertical_grid", "vertical_deck", "dwindle", "fair",
+                  "vertical_fair"]
+CHOICE_WALLPAPER_MODES = ["fill", "fit", "stretch", "tile", "center"]
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +322,7 @@ class OptDef(object):
         "bool", "int", "float", "choice", "string", "color", "cursor")
 
     def __init__(self, key, label, type_, default, min_=None, max_=None,
-                 choices=None, desc="", multi=False):
+                 choices=None, desc="", multi=False, group=None):
         self.key = key
         self.label = label
         self.type = type_
@@ -325,6 +332,7 @@ class OptDef(object):
         self.choices = list(choices) if choices else None
         self.desc = desc
         self.multi = multi            # keys that may repeat: exec, exec_once
+        self.group = group            # section heading shown on the page
 
     def validate(self, value):
         """Return (ok, error-message).  value is a str as it appears on disk."""
@@ -371,7 +379,7 @@ class OptDef(object):
 PAGE_ORDER = [
     "appearance", "animations", "behavior", "layouts", "keybindings",
     "workspaces", "windowrules", "monitors", "input", "startup",
-    "theming", "notifications", "files", "system",
+    "theming", "background", "notifications", "files", "system",
 ]
 
 PAGE_TITLES = {
@@ -386,54 +394,284 @@ PAGE_TITLES = {
     "input": "Input devices",
     "startup": "Startup apps",
     "theming": "Theming",
+    "background": "Background",
     "notifications": "Notifications",
     "files": "Config files",
     "system": "System info",
 }
 
 
+def _P(key, label, type_, default, min_=None, max_=None, choices=None,
+       desc="", group=None):
+    """Small helper so every schema entry can carry a section title."""
+    return OptDef(key, label, type_, default, min_, max_, choices, desc,
+                  group=group)
+
+
 def build_schema():
-    """The MangoWM option database the UI is generated from."""
-    P = OptDef
+    """The MangoWM option database the UI is generated from.
+
+    Every key, default and range below matches MangoWM itself — see
+    ``src/config/option_defs.c`` (parse_option) and ``assets/config.conf``
+    in the mango repository.  The defaults are MangoWM's, so options the
+    user has not set are shown as MangoWM would use them.
+    """
+    P = _P
     appearance = [
-        P("gaps_in", "Gaps inner", P.INT, "8", 0, 500, desc="Pixels between tiled windows"),
-        P("gaps_out", "Gaps outer", P.INT, "16", 0, 500, desc="Pixels between windows and screen edge"),
-        P("border_width", "Border width", P.INT, "2", 0, 100),
-        P("corner_radius", "Corner radius", P.INT, "12", 0, 100),
-        P("col_active_border", "Active border colour", P.COLOR, "0xff66ccff"),
-        P("col_inactive_border", "Inactive border colour", P.COLOR, "0xff333333"),
-        P("shadow_enabled", "Shadows", P.BOOL, "1"),
-        P("blur_enabled", "Blur", P.BOOL, "1"),
+        # Gaps
+        P("gap_inner_horizontal", "Inner gap (horizontal)", OptDef.INT, "5", 0, 500,
+          group="Gaps"),
+        P("gap_inner_vertical", "Inner gap (vertical)", OptDef.INT, "5", 0, 500,
+          group="Gaps"),
+        P("gap_outer_horizontal", "Outer gap (horizontal)", OptDef.INT, "10", 0, 500,
+          group="Gaps"),
+        P("gap_outer_vertical", "Outer gap (vertical)", OptDef.INT, "10", 0, 500,
+          group="Gaps"),
+        P("smart_gaps", "Smart gaps", OptDef.BOOL, "0",
+          desc="No gaps when only one window is shown", group="Gaps"),
+        # Borders
+        P("border_px", "Border width", OptDef.INT, "4", 0, 100, group="Borders"),
+        P("border_radius", "Corner radius", OptDef.INT, "6", 0, 100,
+          group="Borders"),
+        P("no_border_when_single", "No border when single", OptDef.BOOL, "0",
+          group="Borders"),
+        P("no_radius_when_single", "No radius when single", OptDef.BOOL, "0",
+          group="Borders"),
+        P("focus_color", "Focused border color (0xRRGGBBAA)", OptDef.COLOR,
+          "0xc9b890ff", group="Borders"),
+        P("border_color", "Unfocused border color (0xRRGGBBAA)", OptDef.COLOR,
+          "0x444444ff", group="Borders"),
+        P("root_color", "Root/desktop background color", OptDef.COLOR,
+          "0x201b14ff", group="Borders"),
+        P("urgent_color", "Urgent window border color", OptDef.COLOR,
+          "0xad401fff", group="Borders"),
+        # Opacity
+        P("focused_opacity", "Focused window opacity", OptDef.FLOAT, "1.0", 0.0, 1.0,
+          group="Opacity"),
+        P("unfocused_opacity", "Unfocused window opacity", OptDef.FLOAT, "1.0",
+          0.0, 1.0, group="Opacity"),
+        # Blur
+        P("blur", "Blur", OptDef.BOOL, "0", group="Blur"),
+        P("blur_layer", "Blur layer-shell surfaces", OptDef.BOOL, "0",
+          desc="Blur bars/overlays (waybar, rofi, …)", group="Blur"),
+        P("blur_optimized", "Optimized blur", OptDef.BOOL, "1", group="Blur"),
+        P("blur_params_num_passes", "Blur passes", OptDef.INT, "2", 1, 10,
+          group="Blur"),
+        P("blur_params_radius", "Blur radius", OptDef.INT, "5", 0, 100,
+          group="Blur"),
+        P("blur_params_noise", "Blur noise", OptDef.FLOAT, "0.02", 0.0, 1.0,
+          group="Blur"),
+        P("blur_params_brightness", "Blur brightness", OptDef.FLOAT, "0.9", 0.0, 2.0,
+          group="Blur"),
+        P("blur_params_contrast", "Blur contrast", OptDef.FLOAT, "0.9", 0.0, 2.0,
+          group="Blur"),
+        P("blur_params_saturation", "Blur saturation", OptDef.FLOAT, "1.2", 0.0, 2.0,
+          group="Blur"),
+        # Shadows
+        P("shadows", "Shadows", OptDef.BOOL, "0", group="Shadows"),
+        P("layer_shadows", "Shadows on layer-shell surfaces", OptDef.BOOL, "0",
+          group="Shadows"),
+        P("shadow_only_floating", "Shadows only for floating windows",
+          OptDef.BOOL, "1", group="Shadows"),
+        P("shadows_size", "Shadow size", OptDef.INT, "10", 0, 100,
+          group="Shadows"),
+        P("shadows_blur", "Shadow blur", OptDef.INT, "15", 0, 100,
+          group="Shadows"),
+        P("shadows_position_x", "Shadow offset X", OptDef.INT, "0", -100, 100,
+          group="Shadows"),
+        P("shadows_position_y", "Shadow offset Y", OptDef.INT, "0", -100, 100,
+          group="Shadows"),
+        P("shadows_color", "Shadow color (0xRRGGBBAA)", OptDef.COLOR,
+          "0x000000ff", group="Shadows"),
     ]
     animations = [
-        P("animation", "Animations", P.BOOL, "1", desc="Master switch for animations"),
-        P("open_animation", "Open animation", P.CHOICE, "fade", choices=CHOICE_ANIMATIONS),
-        P("close_animation", "Close animation", P.CHOICE, "fade", choices=CHOICE_ANIMATIONS),
-        P("open_duration", "Open duration (s)", P.FLOAT, "0.2", 0.0, 5.0),
-        P("close_duration", "Close duration (s)", P.FLOAT, "0.2", 0.0, 5.0),
-        P("fade_duration", "Fade duration (s)", P.FLOAT, "0.1", 0.01, 5.0),
+        P("animations", "Animations", OptDef.BOOL, "1",
+          desc="Master switch for window animations", group="Basics"),
+        P("layer_animations", "Layer-shell animations", OptDef.BOOL, "1",
+          desc="Animate bars/overlays too (rofi, …)", group="Basics"),
+        P("animation_type_open", "Open animation", OptDef.CHOICE, "slide",
+          choices=CHOICE_ANIMATIONS, group="Basics"),
+        P("animation_type_close", "Close animation", OptDef.CHOICE, "slide",
+          choices=CHOICE_ANIMATIONS, group="Basics"),
+        P("layer_animation_type_open", "Layer open animation", OptDef.CHOICE,
+          "slide", choices=CHOICE_ANIMATIONS, group="Basics"),
+        P("layer_animation_type_close", "Layer close animation", OptDef.CHOICE,
+          "slide", choices=CHOICE_ANIMATIONS, group="Basics"),
+        P("animation_fade_in", "Fade in", OptDef.BOOL, "1", group="Fading"),
+        P("animation_fade_out", "Fade out", OptDef.BOOL, "1", group="Fading"),
+        P("fade_in_begin_opacity", "Fade-in start opacity", OptDef.FLOAT, "0.5",
+          0.0, 1.0, group="Fading"),
+        P("fade_out_begin_opacity", "Fade-out start opacity", OptDef.FLOAT, "0.8",
+          0.0, 1.0, group="Fading"),
+        P("animation_duration_open", "Open duration (ms)", OptDef.INT, "400",
+          0, 5000, group="Durations (ms)"),
+        P("animation_duration_close", "Close duration (ms)", OptDef.INT, "800",
+          0, 5000, group="Durations (ms)"),
+        P("animation_duration_move", "Move duration (ms)", OptDef.INT, "500",
+          0, 5000, group="Durations (ms)"),
+        P("animation_duration_tag", "Tag switch duration (ms)", OptDef.INT, "350",
+          0, 5000, group="Durations (ms)"),
+        P("animation_duration_focus", "Focus duration (ms)", OptDef.INT, "0",
+          0, 5000, group="Durations (ms)"),
+        P("zoom_initial_ratio", "Zoom initial ratio", OptDef.FLOAT, "0.4", 0.0, 2.0,
+          desc="Start scale for zoom animation", group="Zoom"),
+        P("zoom_end_ratio", "Zoom end ratio", OptDef.FLOAT, "0.8", 0.0, 2.0,
+          group="Zoom"),
+        P("tag_animation_direction", "Tag animation direction",
+          OptDef.INT, "1", 0, 1, desc="1 = horizontal, 0 = vertical",
+          group="Zoom"),
+        # Curves: cubic-bezier control points as comma-separated floats.
+        P("animation_curve_open", "Open curve", OptDef.STRING,
+          "0.46,1.0,0.29,1", desc="Cubic bezier x1,y1,x2,y2",
+          group="Easing curves"),
+        P("animation_curve_close", "Close curve", OptDef.STRING,
+          "0.08,0.92,0,1", group="Easing curves"),
+        P("animation_curve_move", "Move curve", OptDef.STRING,
+          "0.46,1.0,0.29,1", group="Easing curves"),
+        P("animation_curve_tag", "Tag curve", OptDef.STRING,
+          "0.46,1.0,0.29,1", group="Easing curves"),
+        P("animation_curve_focus", "Focus curve", OptDef.STRING,
+          "0.46,1.0,0.29,1", group="Easing curves"),
     ]
     behavior = [
-        P("sloppy_focus", "Sloppy focus", P.BOOL, "1", desc="Focus follows the mouse"),
-        P("cursor_warp", "Cursor warp", P.BOOL, "0", desc="Warp cursor to focused window"),
-        P("smart_gaps", "Smart gaps", P.BOOL, "0", desc="No gaps when only one window"),
-        P("snap_distance", "Floating snap distance", P.INT, "10", 0, 200),
-        P("auto_reload", "Auto reload", P.BOOL, "1", desc="Reload MangoWM when the config changes"),
+        P("sloppy_focus", "Sloppy focus", OptDef.BOOL, "1",
+          desc="Focus follows the mouse", group="Focus"),
+        P("warp_cursor", "Cursor warp", OptDef.BOOL, "1",
+          desc="Warp cursor to the focused window", group="Focus"),
+        P("focus_on_activate", "Focus on activate", OptDef.BOOL, "1",
+          desc="Focus a window when it requests activation", group="Focus"),
+        P("focus_cross_monitor", "Focus across monitors", OptDef.BOOL, "0",
+          group="Focus"),
+        P("focus_cross_tag", "Focus across tags", OptDef.BOOL, "0",
+          group="Focus"),
+        P("focus_direction_only_zone_overlap", "Directional focus needs overlap",
+          OptDef.BOOL, "1", desc="focusdir only targets overlapping windows",
+          group="Focus"),
+        P("auto_reload_config", "Auto reload config", OptDef.BOOL, "1",
+          desc="Reload MangoWM when a config file changes on disk",
+          group="Focus"),
+        # Placement / floating
+        P("enable_floating_snap", "Floating snap", OptDef.BOOL, "0",
+          desc="Snap floating windows to other windows and edges",
+          group="Floating / placement"),
+        P("snap_distance", "Snap distance", OptDef.INT, "30", 0, 200,
+          group="Floating / placement"),
+        P("float_full_to_top", "Fullscreen floats above bars", OptDef.BOOL, "0",
+          group="Floating / placement"),
+        P("drag_tile_to_tile", "Drag tile to tile", OptDef.BOOL, "1",
+          desc="Swap tiles by dragging one onto another",
+          group="Floating / placement"),
+        P("drag_tile_small", "Drag tile onto small window swaps", OptDef.BOOL, "1",
+          group="Floating / placement"),
+        P("drag_warp_cursor", "Warp cursor while dragging", OptDef.BOOL, "1",
+          group="Floating / placement"),
+        # Scratchpads
+        P("single_scratchpad", "Single shared scratchpad", OptDef.BOOL, "1",
+          group="Scratchpads"),
+        P("scratchpad_width_ratio", "Scratchpad width ratio", OptDef.FLOAT, "0.8",
+          0.1, 1.0, group="Scratchpads"),
+        P("scratchpad_height_ratio", "Scratchpad height ratio", OptDef.FLOAT, "0.9",
+          0.1, 1.0, group="Scratchpads"),
+        P("scratchpad_cross_monitor", "Scratchpads follow monitors", OptDef.BOOL,
+          "1", group="Scratchpads"),
     ]
     layouts = [
-        P("layout", "Default layout", P.CHOICE, "tile", choices=CHOICE_LAYOUTS),
-        P("master_factor", "Master factor", P.FLOAT, "0.55", 0.1, 0.9),
-        P("master_count", "Master count", P.INT, "1", 1, 10),
-        P("new_is_master", "New window becomes master", P.BOOL, "0"),
-        P("scroller_mod", "Scroller modifier", P.STRING, ""),
-        P("scroller_wrap", "Scroller wrap", P.CHOICE, "none", choices=["none", "nextscreen"]),
+        P("default_master_factor", "Master factor", OptDef.FLOAT, "0.55", 0.05, 0.95,
+          desc="Width fraction of the master column",
+          group="Master-stack (tile)"),
+        P("default_master_count", "Master windows", OptDef.INT, "1", 1, 10,
+          group="Master-stack (tile)"),
+        P("new_is_master", "New window becomes master", OptDef.BOOL, "1",
+          group="Master-stack (tile)"),
+        P("circle_layout", "Layout cycle list", OptDef.STRING, "",
+          desc="Comma list of layouts cycled by switch_layout, e.g. tile,scroller (empty = all)",
+          group="Master-stack (tile)"),
+        P("scroller_structs", "Scroller slot count", OptDef.INT, "20", 1, 100,
+          group="Scroller"),
+        P("scroller_default_proportion", "Default slot proportion", OptDef.FLOAT,
+          "0.8", 0.05, 4.0, group="Scroller"),
+        P("scroller_default_proportion_single", "Single slot proportion",
+          OptDef.FLOAT, "1.0", 0.05, 4.0, group="Scroller"),
+        P("scroller_proportion_preset", "Proportion presets", OptDef.STRING,
+          "0.5,0.8,1.0", desc="Comma list cycled by switch_proportion_preset",
+          group="Scroller"),
+        P("scroller_focus_center", "Keep focused slot centered", OptDef.BOOL, "0",
+          group="Scroller"),
+        P("scroller_prefer_center", "Prefer centered placement", OptDef.BOOL, "0",
+          group="Scroller"),
+        P("scroller_ignore_proportion_single", "Ignore proportion when single",
+          OptDef.BOOL, "1", group="Scroller"),
+        P("edge_scroller_pointer_focus", "Focus slot under cursor at edge",
+          OptDef.BOOL, "1", group="Scroller"),
+        P("dwindle_smart_split", "Dwindle smart split", OptDef.BOOL, "0",
+          group="Dwindle"),
+        P("dwindle_drop_simple_split", "Dwindle drop simple split", OptDef.BOOL,
+          "1", desc="Remove splits of single-child nodes",
+          group="Dwindle"),
+        P("dwindle_manual_split", "Manual split direction", OptDef.BOOL, "0",
+          group="Dwindle"),
+        P("dwindle_horizontal_split", "Allow horizontal split", OptDef.BOOL, "1",
+          group="Dwindle"),
+        P("dwindle_vertical_split", "Allow vertical split", OptDef.BOOL, "1",
+          group="Dwindle"),
+        P("dwindle_preserve_split", "Preserve split on window close", OptDef.BOOL,
+          "0", group="Dwindle"),
+        P("dwindle_smart_resize", "Dwindle smart resize", OptDef.BOOL, "0",
+          group="Dwindle"),
+        P("monocle_tab_mode", "Monocle tab bar", OptDef.BOOL, "1",
+          group="Monocle / deck"),
+        P("monocle_no_border", "Monocle: no borders", OptDef.BOOL, "0",
+          group="Monocle / deck"),
+        P("monocle_no_gap", "Monocle: no gaps", OptDef.BOOL, "0",
+          group="Monocle / deck"),
+        P("monocle_no_radius", "Monocle: no corner radius", OptDef.BOOL, "0",
+          group="Monocle / deck"),
+        P("deck_tab_mode", "Deck tab bar", OptDef.BOOL, "1",
+          group="Monocle / deck"),
     ]
     input_ = [
-        P("cursor_theme", "Cursor theme", P.CURSOR, "", desc="Empty = system default"),
-        P("cursor_size", "Cursor size", P.INT, "24", 8, 256),
-        P("disable_trackpad", "Disable trackpad", P.BOOL, "0"),
-        P("kb_repeat_delay", "Key repeat delay (ms)", P.INT, "300", 100, 2000),
-        P("kb_repeat_rate", "Key repeat rate (Hz)", P.INT, "25", 1, 100),
+        P("repeat_rate", "Key repeat rate (Hz)", OptDef.INT, "25", 1, 200,
+          group="Keyboard"),
+        P("repeat_delay", "Key repeat delay (ms)", OptDef.INT, "600", 0, 2000,
+          group="Keyboard"),
+        P("numlock_on", "NumLock on at startup", OptDef.BOOL, "0",
+          group="Keyboard"),
+        P("xkb_rules_layout", "Keyboard layout(s)", OptDef.STRING, "us",
+          desc="XKB layout, comma list for multiple, e.g. us,de",
+          group="Keyboard"),
+        P("xkb_rules_variant", "Layout variant", OptDef.STRING, "",
+          group="Keyboard"),
+        P("xkb_rules_options", "XKB options", OptDef.STRING, "",
+          desc="e.g. ctrl:nocaps or grp:alt_shift_toggle", group="Keyboard"),
+        P("cursor_theme", "Cursor theme", OptDef.CURSOR, "",
+          desc="Empty = system default", group="Cursor"),
+        P("cursor_size", "Cursor size", OptDef.INT, "24", 8, 256, group="Cursor"),
+        P("cursor_hide_timeout", "Cursor hide timeout (s, 0 = never)",
+          OptDef.INT, "0", 0, 3600, group="Cursor"),
+        P("disable_trackpad", "Disable trackpad", OptDef.BOOL, "0",
+          desc="Needs relogin to apply", group="Trackpad"),
+        P("tap_to_click", "Tap to click", OptDef.BOOL, "1", group="Trackpad"),
+        P("tap_and_drag", "Tap and drag", OptDef.BOOL, "1", group="Trackpad"),
+        P("drag_lock", "Drag lock", OptDef.BOOL, "1", group="Trackpad"),
+        P("trackpad_natural_scrolling", "Natural scrolling", OptDef.BOOL, "0",
+          group="Trackpad"),
+        P("trackpad_disable_while_typing", "Disable while typing", OptDef.BOOL,
+          "1", group="Trackpad"),
+        P("trackpad_left_handed", "Left-handed", OptDef.BOOL, "0",
+          group="Trackpad"),
+        P("trackpad_middle_button_emulation", "Middle-button emulation",
+          OptDef.BOOL, "0", group="Trackpad"),
+        P("swipe_min_threshold", "Swipe minimum threshold", OptDef.INT, "1", 0, 100,
+          group="Trackpad"),
+        P("mouse_natural_scrolling", "Natural scrolling", OptDef.BOOL, "0",
+          group="Mouse"),
+        P("mouse_accel_profile", "Acceleration profile", OptDef.INT, "-1", -1, 2,
+          desc="-1 = default, 0 = flat, 1 = adaptive", group="Mouse"),
+        P("mouse_accel_speed", "Acceleration speed", OptDef.FLOAT, "0.0", -1.0, 1.0,
+          group="Mouse"),
+        P("mouse_left_handed", "Left-handed", OptDef.BOOL, "0", group="Mouse"),
+        P("mouse_middle_button_emulation", "Middle-button emulation",
+          OptDef.BOOL, "0", group="Mouse"),
     ]
     return {
         "appearance": appearance,
@@ -441,9 +679,9 @@ def build_schema():
         "behavior": behavior,
         "layouts": layouts,
         "input": input_,
-        # These pages are list-editors over other files; empty option lists.
+        # These pages are list-editors or custom pages; empty option lists.
         "keybindings": [], "workspaces": [], "windowrules": [],
-        "monitors": [], "startup": [], "theming": [],
+        "monitors": [], "startup": [], "theming": [], "background": [],
         "notifications": [], "files": [], "system": [],
     }
 
@@ -963,6 +1201,138 @@ GTK_THEME_SCHEMA = "org.gnome.desktop.interface"
 
 
 # ---------------------------------------------------------------------------
+# Wallpaper (background) helpers — no GTK imports needed
+# ---------------------------------------------------------------------------
+
+WALLPAPER_BACKENDS = {
+    "swaybg": ["swaybg", "-i", "{path}", "-m", "{mode}"],
+    "swww": ["swww", "img", "{path}"],
+    "feh": ["feh", "--bg-{mode2}", "{path}"],   # X11 only
+}
+
+# Matches a wallpaper line in autostart.sh: swaybg -i <file>, swww img <file>,
+# feh --bg-... <file> — only non-comment lines.
+_WALLPAPER_LINE_RE = re.compile(
+    r"^\s*((?:[^#\n]*?)\b(?:swaybg|swww)\b[^\n]*|[^#\n]*\bfeh\b[^\n]*--bg[^\n]*)$",
+    re.IGNORECASE)
+
+
+def detect_wallpaper_backends():
+    """Return the wallpaper backends available on this system."""
+    found = []
+    for name in WALLPAPER_BACKENDS:
+        rc, _out = run_cmd(["which", name], timeout=2)
+        if rc == 0:
+            found.append(name)
+    return found
+
+
+def apply_wallpaper(path, mode="fill", backend="swaybg"):
+    """Apply a wallpaper immediately, replacing any running instance.
+
+    Returns (ok, message).  The spawned daemon is detached from this
+    process so the wallpaper survives the settings app closing.
+    """
+    template = WALLPAPER_BACKENDS.get(backend)
+    if not template:
+        return False, "Unknown wallpaper backend %r" % backend
+    rc, out = run_cmd(["which", backend], timeout=2)
+    if rc != 0:
+        return False, "%s is not installed" % backend
+    fullpath = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(fullpath):
+        return False, "No such image file: %s" % path
+
+    # Stop the previous daemon first so the new wallpaper is visible.
+    # (Older swaybg/swww instances stay mapped and hide the new one.)
+    run_cmd(["pkill", "-x", "swaybg"], timeout=2)
+    run_cmd(["pkill", "-f", "swww"], timeout=2)
+
+    argv = [a.format(path=fullpath, mode=mode,
+                     mode2={"fill": "fill", "fit": "max",
+                            "stretch": "scale", "tile": "tile",
+                            "center": "center"}.get(mode, "max"))
+            for a in template]
+    try:
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return False, "Could not start %s: %s" % (backend, exc)
+    return True, ""
+
+
+def autostart_wallpaper_line(path, mode, backend="swaybg"):
+    """The shell line written into autostart.sh for the chosen wallpaper."""
+    marker = {"swaybg": "swaybg -i {p} -m {m}",
+              "swww": "swww img {p}",
+              "feh": "feh --bg-{m2} {p}"}[backend]
+    m2 = {"fill": "fill", "fit": "max", "stretch": "scale",
+          "tile": "tile", "center": "center"}.get(mode, "max")
+    return ("%s >/dev/null 2>&1 &"
+            % marker.format(p=path, m=mode, m2=m2))
+
+
+def set_autostart_wallpaper(path, mode, backend="swaybg",
+                            autostart_path=DEFAULT_AUTOSTART_PATH):
+    """Persist the wallpaper by editing the user's autostart script.
+
+    Replaces the first existing wallpaper line (swaybg / swww / feh), or
+    appends a managed line when none exists.  Preserves everything else:
+    comments, blank lines, ordering, permissions and the trailing newline.
+    A backup is saved before the first modification.
+
+    Returns (ok, message).
+    """
+    fullpath = os.path.expanduser(autostart_path)
+    target = os.path.realpath(fullpath)
+    if not os.path.isfile(target):
+        return False, ("Autostart script not found at %s — MangoWM runs it via "
+                       "exec_once, so the wallpaper would not persist." %
+                       fullpath)
+    try:
+        with open(target, "r", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        return False, "Cannot read %s: %s" % (fullpath, exc)
+
+    new_line = autostart_wallpaper_line(path, mode, backend)
+    lines = text.splitlines(keepends=True)
+    replaced = False
+    for i, line in enumerate(lines):
+        if _WALLPAPER_LINE_RE.match(line):
+            eol = "\n" if line.endswith("\n") else ""
+            lines[i] = new_line + eol
+            replaced = True
+            break
+    if not replaced:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += ("\n# wallpaper (managed by Mango Settings)\n%s\n" % new_line)
+    else:
+        text = "".join(lines)
+
+    # Session backup before touching the user's script.
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        bdir = os.path.expanduser(os.path.join(BACKUP_ROOT, stamp))
+        os.makedirs(bdir, exist_ok=True)
+        with open(target, "rb") as fh:
+            data = fh.read()
+        with open(os.path.join(bdir, "autostart.sh"), "wb") as fh:
+            fh.write(data)
+        # Atomic write, preserving permissions.
+        st = os.stat(target)
+        tmp = target + ".mango-settings-tmp"
+        with open(tmp, "w", errors="replace") as fh:
+            fh.write(text)
+        os.chmod(tmp, st.st_mode & 0o7777)
+        os.replace(tmp, target)
+    except OSError as exc:
+        return False, "Could not write %s: %s" % (fullpath, exc)
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
 # GTK user interface
 # ---------------------------------------------------------------------------
 
@@ -1041,13 +1411,31 @@ def run_gui(args):
             super().__init__(app)
 
         def build(self):
-            grid = Gtk.Grid(column_spacing=12, row_spacing=8)
-            grid.set_margin_top(6)
+            grid = None
+            current_group = None
             self.widgets = {}
+
+            def finish_frame():
+                if grid is not None:
+                    frame = self.add_frame()
+                    frame.add(grid)
+
             row = 0
             for opt in SCHEMA[self.page_key]:
                 if self.page_key != "appearance" and opt.key in HIDDEN_OPTION_KEYS:
                     continue
+                # Start a new titled frame whenever the section changes.
+                if opt.group != current_group:
+                    finish_frame()
+                    if opt.group:
+                        head = Gtk.Label(xalign=0)
+                        head.set_markup("<b>%s</b>" %
+                                        GLib.markup_escape_text(opt.group))
+                        self.content.pack_start(head, False, False, 2)
+                    grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+                    grid.set_margin_top(2)
+                    current_group = opt.group
+                    row = 0
                 grid.attach(Gtk.Label(label=opt.label, xalign=0), 0, row, 1, 1)
                 widget = self._make_widget(opt)
                 self.widgets[opt.key] = (opt, widget)
@@ -1058,10 +1446,9 @@ def run_gui(args):
                     note.get_style_context().add_class("dim-label")
                     grid.attach(note, 2, row, 1, 1)
                 row += 1
-            if row == 0:
+            finish_frame()
+            if not self.widgets:
                 self.add_note("Nothing to configure here.")
-            frame = self.add_frame()
-            frame.add(grid)
             self.show_all()
 
         def _current(self, opt):
@@ -1565,6 +1952,105 @@ def run_gui(args):
                 self.add_note("No notification daemon detected. Install one of: "
                               "swaync, mako, dunst, fnott.")
 
+    class BackgroundPage(PageBase):
+        """Wallpaper / background changer.
+
+        Applies the image live with the best available backend (swaybg,
+        swww, feh) and persists the choice by editing the ``swaybg`` line
+        in ``~/.config/mango/autostart.sh`` so it survives logout.
+        """
+
+        page_key = "background"
+
+        def build(self):
+            backends = detect_wallpaper_backends()
+            self.backend = "swaybg" if "swaybg" in backends else (
+                backends[0] if backends else "swaybg")
+
+            grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            grid.set_margin_top(6)
+
+            grid.attach(Gtk.Label(label="Image", xalign=0), 0, 0, 1, 1)
+            self.file_btn = Gtk.FileChooserButton(
+                title="Choose a wallpaper", action=Gtk.FileChooserAction.OPEN)
+            filt = Gtk.FileFilter()
+            filt.set_name("Images")
+            for pat in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp"):
+                filt.add_pattern(pat)
+            self.file_btn.add_filter(filt)
+            self.file_btn.set_hexpand(True)
+            self.file_btn.connect("file-set", self.on_file_set)
+            grid.attach(self.file_btn, 1, 0, 1, 1)
+
+            grid.attach(Gtk.Label(label="Fit mode", xalign=0), 0, 1, 1, 1)
+            self.mode_combo = Gtk.ComboBoxText()
+            for m in CHOICE_WALLPAPER_MODES:
+                self.mode_combo.append_text(m)
+            self.mode_combo.set_active(0)
+            grid.attach(self.mode_combo, 1, 1, 1, 1)
+
+            grid.attach(Gtk.Label(label="Preview", xalign=0), 0, 2, 1, 1)
+            self.preview = Gtk.Image()
+            self.preview.set_size_request(240, 135)
+            grid.attach(self.preview, 1, 2, 1, 1)
+
+            frame = self.add_frame()
+            frame.add(grid)
+
+            btns = Gtk.ButtonBox(spacing=6)
+            btns.set_layout(Gtk.ButtonBoxStyle.START)
+            apply = Gtk.Button(label="Set wallpaper")
+            apply.get_style_context().add_class("suggested-action")
+            apply.connect("clicked", self.on_apply)
+            btns.add(apply)
+            self.content.pack_start(btns, False, False, 4)
+
+            self.status = Gtk.Label(xalign=0)
+            self.content.pack_start(self.status, False, False, 2)
+
+            if not backends:
+                self.add_note("No wallpaper backend found — install swaybg "
+                              "(Arch: sudo pacman -S swaybg).")
+            else:
+                self.add_note("Detected backends: %s. Applies immediately and "
+                              "is saved to ~/.config/mango/autostart.sh so it "
+                              "survives logout." % ", ".join(backends))
+            self.show_all()
+
+        def on_file_set(self, btn):
+            path = btn.get_filename()
+            if not path:
+                return
+            self.preview.set_from_file(path)
+            # Scale the preview down (the file may be 4K).
+            try:
+                from gi.repository import GdkPixbuf
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    path, 240, 135, True)
+                self.preview.set_from_pixbuf(pb)
+            except Exception:
+                pass
+            self.show_all()
+
+        def on_apply(self, _btn):
+            path = self.file_btn.get_filename()
+            if not path:
+                self.app.error_dialog("Choose an image first.")
+                return
+            mode = self.mode_combo.get_active_text() or "fill"
+            ok, msg = apply_wallpaper(path, mode, backend=self.backend)
+            if not ok:
+                self.app.error_dialog(msg)
+                return
+            ok2, msg2 = set_autostart_wallpaper(path, mode, backend=self.backend)
+            if ok2:
+                self.status.set_text(
+                    "Wallpaper set and saved to ~/.config/mango/autostart.sh")
+            else:
+                self.status.set_text(
+                    "Applied for this session, but NOT saved: %s" % msg2)
+            self.show_all()
+
     class SystemInfoPage(PageBase):
         page_key = "system"
 
@@ -1597,7 +2083,7 @@ def run_gui(args):
     class SettingsWindow(Gtk.ApplicationWindow):
         PANES = ["appearance", "animations", "behavior", "layouts", "keybindings",
                  "workspaces", "windowrules", "monitors", "input", "startup",
-                 "theming", "notifications", "files", "system"]
+                 "theming", "background", "notifications", "files", "system"]
 
         def __init__(self, app):
             super().__init__(application=app.gtk_app,
@@ -1606,23 +2092,17 @@ def run_gui(args):
             self.paned = Gtk.Paned()
             self.add(self.paned)
 
-            header = Gtk.HeaderBar(title=APP_NAME, show_close_button=True)
-            header.set_show_close_button(True)
-            self.set_titlebar(header)
-            save = Gtk.Button(label="_Save", use_underline=True)
-            save.connect("clicked", lambda *_: app.action_save())
-            header.pack_start(save)
-            reload_btn = Gtk.Button(label="Reload Mango")
-            reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
-            header.pack_start(reload_btn)
+            # No title bar: all window controls live in the sidebar instead.
+            # The compositor keeps the window title (taskbar/mangobar) but the
+            # app itself draws no header bar.
+            # -- sidebar -------------------------------------------------------
+            side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            side.set_border_width(8)
 
             self.search = Gtk.SearchEntry(placeholder_text="Search pages… (Ctrl+F)")
             self.search.connect("search-changed", self.on_search)
-            header.set_custom_title(self.search)
+            side.pack_start(self.search, False, False, 2)
 
-            # sidebar
-            side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            side.set_border_width(8)
             theme_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             theme_label = Gtk.Label(label="Theme", xalign=0)
             self.theme_combo = Gtk.ComboBoxText()
@@ -1632,12 +2112,33 @@ def run_gui(args):
             self.theme_combo.connect("changed", app.on_theme_changed)
             theme_box.add(theme_label); theme_box.add(self.theme_combo)
             side.pack_start(theme_box, False, False, 2)
+
             self.sidebar = Gtk.ListBox()
             self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
             self.sidebar.connect("row-selected", self.on_row_selected)
             side.pack_start(self.sidebar, True, True, 0)
+
+            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            save = Gtk.Button(label="_Save", use_underline=True)
+            save.set_tooltip_text("Save all changed pages (Ctrl+S)")
+            save.connect("clicked", lambda *_: app.action_save())
+            btns.pack_start(save, False, False, 0)
+            reload_btn = Gtk.Button(label="Reload Mango")
+            reload_btn.set_tooltip_text("Run 'mmsg dispatch reload_config' (Ctrl+R)")
+            reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
+            btns.pack_start(reload_btn, False, False, 0)
+            spacer = Gtk.Box()               # pushes the close button to the right
+            spacer.set_hexpand(True)
+            btns.pack_start(spacer, True, True, 0)
+            close_btn = Gtk.Button.new_from_icon_name(
+                "window-close-symbolic", Gtk.IconSize.BUTTON)
+            close_btn.set_tooltip_text("Quit (Ctrl+Q)")
+            close_btn.connect("clicked", lambda *_: app.action_quit())
+            btns.pack_end(close_btn, False, False, 0)
+            side.pack_start(btns, False, False, 2)
+
             self.paned.add1(side)
-            self.paned.set_position(200)
+            self.paned.set_position(220)
 
             # stack
             self.stack = Gtk.Stack()
@@ -1762,6 +2263,7 @@ def run_gui(args):
                 "keybindings": KeybindsPage, "workspaces": WorkspacesPage,
                 "windowrules": WindowRulesPage, "monitors": MonitorsPage,
                 "startup": StartupPage, "theming": ThemingPage,
+                "background": BackgroundPage,
                 "notifications": NotificationsPage, "files": ConfigFilesPage,
                 "system": SystemInfoPage,
             }[key](self)
