@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install pyflakes
+      - run: python -m pyflakes mango-settings.py tests
+      - run: python -m py_compile mango-settings.py
+      - run: python -m unittest discover -v tests
+      - run: python mango-settings.py --version
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s sh install.sh tests/distro-test.sh
+      - name: Oldest supported Python (3.8)
+        run: docker run --rm -v "$PWD:/src" -w /src python:3.8-slim sh -c "python -m unittest discover tests && python mango-settings.py --version"
+      - name: Install and uninstall into a temp prefix (dash)
+        run: |
+          dash ./install.sh --no-deps --prefix "$RUNNER_TEMP/pfx"
+          test -x "$RUNNER_TEMP/pfx/bin/mango-settings"
+          dash ./install.sh --prefix "$RUNNER_TEMP/pfx" --uninstall
+          test ! -e "$RUNNER_TEMP/pfx/bin/mango-settings"
+      - name: make install
+        run: |
+          make install PREFIX=/usr DESTDIR="$RUNNER_TEMP/dest"
+          "$RUNNER_TEMP/dest/usr/bin/mango-settings" --version
+          make uninstall PREFIX=/usr DESTDIR="$RUNNER_TEMP/dest"
+
+  distros:
+    name: install on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - archlinux:latest
+          - manjarolinux/base:latest
+          - debian:stable
+          - ubuntu:22.04
+          - ubuntu:latest
+          - fedora:latest
+          - almalinux:9
+          - opensuse/tumbleweed:latest
+          - opensuse/leap:16.0
+          - ghcr.io/void-linux/void-glibc-full:latest
+          - alpine:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -v "$PWD:/src" ${{ matrix.image }} sh /src/tests/distro-test.sh
+
+  arch-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build and install the PKGBUILD
+        run: |
+          docker run --rm -v "$PWD:/src" archlinux:latest sh -euc '
+            pacman -Syu --noconfirm --needed base-devel git python python-gobject gtk3 >/dev/null
+            useradd -m builder
+            cp -r /src /home/builder/repo && chown -R builder /home/builder/repo
+            su builder -c "
+              set -e
+              git config --global --add safe.directory \"*\"
+              cd ~/repo && git checkout -qB main
+              cd packaging/arch
+              sed -i \"s|git+https://github.com/code-smith404/MangoWM-Settings.git|git+file:///home/builder/repo#branch=main|\" PKGBUILD
+              makepkg --noconfirm
+            "
+            pacman -U --noconfirm /home/builder/repo/packaging/arch/*.pkg.tar.zst
+            mango-settings --version
+            pacman -Ql mango-settings-git
+          '
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --print-build-logs
+      - run: nix build --print-build-logs .#mango-settings
+      - run: nix run . -- --version
+      - name: install.sh on Nix (nix-shell launcher)
+        run: |
+          docker run --rm -v "$PWD:/src" nixos/nix sh -euc '
+            cd /src
+            MANGO_SETTINGS_FAMILY=nix sh ./install.sh --prefix /root/.local
+            cat /root/.local/bin/mango-settings
+            /root/.local/bin/mango-settings --version
+          '
