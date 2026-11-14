@@ -9,7 +9,10 @@ wins) and writes changes back in place, preserving comments, symlinks and
 file permissions.
 """
 
+from __future__ import annotations
+
 import argparse
+import errno
 import json
 import os
 import re
@@ -20,7 +23,7 @@ import tempfile
 import time
 from collections import namedtuple
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 APP_ID = "io.github.code_smith404.MangoSettings"
 REPO_URL = "https://github.com/code-smith404/MangoWM-Settings"
 DOCS_URL = "https://github.com/mangowm/mango/tree/main/docs"
@@ -176,18 +179,84 @@ CONFIG_SCHEMA = {
 # Config file handling (no GTK needed — this part is unit-testable)
 # ---------------------------------------------------------------------------
 
-Entry = namedtuple("Entry", "path idx key value")
+Entry = namedtuple("Entry", "path idx key value raw")
+Entry.__doc__ = """One ``key=value`` assignment in parse order.
+
+``value`` is what MangoWM sees (quotes stripped, ``$variables`` expanded);
+``raw`` is the unexpanded value as written in the file."""
+
+Problem = namedtuple("Problem", "kind path origin message")
+Problem.__doc__ = """Something that makes MangoWM load the config differently than
+expected. ``kind`` is one of: missing, unreadable, cycle, depth, toml.
+``origin`` is ``(path, line_index)`` of the ``source=`` line, or None."""
+
+# MangoWM recurses into includes with no limit (a cycle crashes it). We stop
+# well before that; real configs are a handful of levels deep.
+MAX_INCLUDE_DEPTH = 32
+# MangoWM reads lines with fgets(line, 512) and scanf("%255[^=]=%255[^\n]").
+MAX_KEY_LEN = 255
+MAX_VALUE_LEN = 255
+C_SPACE = " \t\n\v\f\r"  # C isspace() in the "C" locale
 
 
-def read_lines(path):
+class ConfigError(OSError):
+    """A config file couldn't be written safely; ``strerror`` says why."""
+
+    def __init__(self, message: str, filename: str | None = None):
+        super().__init__(errno.EIO, message, filename)
+
+
+def describe_error(err: BaseException) -> str:
+    """Turn an exception from a config read/write into a message users can act on."""
+    if not isinstance(err, OSError):
+        return str(err)
+    name = err.filename or "the file"
+    if isinstance(err, ConfigError):
+        return err.strerror
+    if isinstance(err, PermissionError):
+        return ("permission denied for %s. Check that you own it "
+                "(ls -l %s)." % (name, name))
+    if err.errno == errno.EROFS:
+        return "%s is on a read-only file system." % name
+    if err.errno == errno.ENOSPC:
+        return "no space left on the device holding %s." % name
+    msg = err.strerror or str(err)
+    return "%s (%s)" % (msg, err.filename) if err.filename else msg
+
+
+def read_raw(path: str) -> tuple[list[str], str, bool]:
+    """Read *path* as (lines, newline, ends_with_newline).
+
+    Lines are split on ``\\n`` only, like fgets() in MangoWM (str.splitlines()
+    would also split on form feeds and Unicode separators). Undecodable bytes
+    survive a read/write round trip thanks to ``surrogateescape``. A missing
+    file reads as empty; other errors (e.g. permission denied) are raised.
+    """
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read().splitlines()
+        with open(path, "rb") as fh:
+            data = fh.read()
     except (FileNotFoundError, NotADirectoryError):
-        return []
+        return [], "\n", True
+    text = data.decode("utf-8", errors="surrogateescape")
+    if not text:
+        return [], "\n", True
+    newline = "\r\n" if "\r\n" in text.split("\n", 1)[0] + "\n" else "\n"
+    final = text.endswith("\n")
+    lines = text.split("\n")
+    if final:
+        lines.pop()
+    if newline == "\r\n":
+        lines = [l[:-1] if l.endswith("\r") else l for l in lines]
+    return lines, newline, final
 
 
-def file_stamp(path):
+def read_lines(path: str) -> list[str]:
+    """Lines of *path* without line endings ([] if it doesn't exist)."""
+    return read_raw(path)[0]
+
+
+def file_stamp(path: str):
+    """(mtime_ns, size) of *path*, or None. Used to detect external edits."""
     try:
         st = os.stat(path)
         return (st.st_mtime_ns, st.st_size)
@@ -198,42 +267,59 @@ def file_stamp(path):
 _backed_up = set()
 
 
-def backup_dir():
+def backup_dir() -> str:
+    """Folder that holds one sub-folder of backups per app session."""
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache")
     return os.path.join(base, "mango-settings", "backups")
 
 
-def backup_once(real):
-    """Copy a file to ~/.cache/mango-settings/backups/<session>/ once per run."""
-    if real in _backed_up or not os.path.isfile(real):
-        return
-    _backed_up.add(real)
+def backup_once(real: str) -> str | None:
+    """Copy *real* to the session backup folder before its first change.
+
+    Returns the backup path (None if the file doesn't exist yet). Raises
+    ConfigError when the copy fails, so callers never overwrite a file that
+    has no backup.
+    """
+    if not os.path.isfile(real):
+        return None
+    dest = os.path.join(backup_dir(), SESSION_STAMP)
+    name = os.path.relpath(real, HOME) if real.startswith(HOME + os.sep) else real
+    # ".config/mango/x.conf" -> "config__mango__x.conf" (not a hidden file)
+    target = os.path.join(dest, name.strip(os.sep).replace(os.sep, "__").lstrip("."))
+    if real in _backed_up:
+        return target
     try:
-        dest = os.path.join(backup_dir(), SESSION_STAMP)
         os.makedirs(dest, exist_ok=True)
-        name = os.path.relpath(real, HOME) if real.startswith(HOME) else real
-        shutil.copy2(real, os.path.join(dest, name.strip(os.sep).replace(os.sep, "__")))
-    except OSError:
-        pass
+        shutil.copy2(real, target)
+    except OSError as err:
+        raise ConfigError("Not saved: couldn't back up %s to %s (%s)."
+                          % (real, dest, err.strerror or err), real) from err
+    _backed_up.add(real)
+    return target
 
 
-def write_text(path, text, executable=False):
-    """Atomically write *text* to *path*.
+def write_text(path: str, text: str, executable: bool = False) -> None:
+    """Atomically replace the contents of *path* with *text*.
 
     * follows symlinks, so dotfile managers (GNU Stow, chezmoi symlinks, …)
-      keep working — the link target is updated, not replaced;
-    * keeps the original permission bits (new files get 0644 / 0755);
-    * creates the parent directory if needed and backs up the old file.
+      keep working: the link target is updated, the link stays;
+    * writes a temp file in the same folder, fsyncs it and renames it over
+      the old file, so an interrupted save leaves either the old or the new
+      file, never a truncated one;
+    * keeps the original permission bits (new files get 0666/0777 & ~umask);
+    * backs up the old file first and refuses to write if that fails.
     """
     real = os.path.realpath(path)
     folder = os.path.dirname(real)
     os.makedirs(folder, exist_ok=True)
+    if os.path.exists(real) and not os.access(real, os.W_OK):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), real)
     backup_once(real)
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".%s." % os.path.basename(real),
                                suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(text.encode("utf-8", errors="surrogateescape"))
             fh.flush()
             os.fsync(fh.fileno())
         if os.path.exists(real):
@@ -249,23 +335,37 @@ def write_text(path, text, executable=False):
         except OSError:
             pass
         raise
+    try:  # make the rename itself durable
+        dfd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
 
 
-def write_lines(path, lines):
-    write_text(path, "\n".join(lines) + "\n")
+def write_lines(path: str, lines: list[str]) -> None:
+    """Write *lines*, keeping the file's line endings (LF or CRLF)."""
+    _old, newline, final = read_raw(path)
+    text = newline.join(lines)
+    if final or not _old or not lines:
+        text += newline
+    write_text(path, text)
 
 
-def split_comment(line):
+def split_comment(line: str) -> tuple[str, str]:
     """Split off an inline comment the way MangoWM does: a ``#`` that follows
-    whitespace and is not inside quotes. Returns (body, comment)."""
+    whitespace and is not inside quotes. Returns (body, comment), where the
+    comment keeps the whitespace in front of it."""
     quote = None
     for i, ch in enumerate(line):
         if quote is None:
             if ch in "'\"":
                 quote = ch
-            elif ch == "#" and i > 0 and line[i - 1].isspace():
+            elif ch == "#" and i > 0 and line[i - 1] in C_SPACE:
                 j = i
-                while j > 0 and line[j - 1].isspace():
+                while j > 0 and line[j - 1] in C_SPACE:
                     j -= 1
                 return line[:j], line[j:]
         elif ch == quote:
@@ -273,39 +373,116 @@ def split_comment(line):
     return line, ""
 
 
-def strip_quotes(value):
+def strip_quotes(value: str) -> str:
+    """Remove one pair of matching outer quotes and trim inside, like MangoWM."""
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
+        return value[1:-1].strip(C_SPACE)
     return value
 
 
-def split_line(line):
-    """Parse ``key=value`` → (key, value, comment, indent), or None."""
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#") or "=" not in stripped:
+def split_line(line: str):
+    """Parse ``key=value`` → (key, value, comment, indent), or None.
+
+    Mirrors MangoWM's parse_config_line(): lines starting with ``#`` are
+    skipped, the inline comment is removed, and both ``key`` and ``value``
+    need at least one character (``key=`` alone is a parse error in MangoWM
+    and has no effect). Over-long keys/values are rejected the same way.
+    """
+    if not line or line[0] == "#":
         return None
     body, comment = split_comment(line)
-    key, value = body.split("=", 1)
-    indent = line[:len(line) - len(line.lstrip())]
-    key = key.strip()
+    # MangoWM cuts at the '#', keeping the whitespace before it.
+    processed = line[:len(line) - len(comment.lstrip(C_SPACE))] if comment else line
+    eq = processed.find("=")
+    if eq <= 0 or eq >= MAX_KEY_LEN + 1 or eq == len(processed) - 1:
+        return None
+    if len(processed) - eq - 1 > MAX_VALUE_LEN:
+        return None
+    key = processed[:eq].strip(C_SPACE)
     if not key:
         return None
-    return key, strip_quotes(value.strip()), comment, indent
+    indent = line[:len(line) - len(line.lstrip(C_SPACE))]
+    return key, strip_quotes(body[body.index("=") + 1:].strip(C_SPACE)), comment, indent
 
 
-def format_line(key, value, template=None):
-    """Build a config line, keeping indentation and inline comment of *template*."""
-    indent, comment = "", ""
+def _quote_for(value: str, template_raw: str | None) -> str:
+    """Return *value* as it must be written so MangoWM reads it back unchanged."""
+    if "\n" in value or "\r" in value:
+        raise ValueError("values can't contain line breaks")
+    value = value.strip(C_SPACE)  # MangoWM trims values anyway
+    quote = None
+    if template_raw and len(template_raw) >= 2 and template_raw[0] == template_raw[-1] \
+            and template_raw[0] in "'\"":
+        quote = template_raw[0]  # keep the user's quoting style
+    if split_comment("x=" + value)[1] or (len(value) >= 2 and value[0] == value[-1]
+                                          and value[0] in "'\""):
+        quote = quote or "\""  # " #" would start a comment; outer quotes would be eaten
+    if quote and quote in value:
+        quote = "'" if quote == "\"" else "\""
+        if quote in value:
+            raise ValueError("values can't contain both ' and \" together with ' #'")
+    text = "%s%s%s" % (quote, value, quote) if quote else value
+    if len(text) > MAX_VALUE_LEN:
+        raise ValueError("MangoWM ignores values longer than %d characters" % MAX_VALUE_LEN)
+    return text
+
+
+def format_line(key: str, value: str, template: str | None = None) -> str:
+    """Build a config line, keeping indentation, quoting and inline comment of
+    *template*. Raises ValueError for values MangoWM can't read back."""
+    indent, comment, raw = "", "", None
     if template is not None:
         parsed = split_line(template)
         if parsed:
             indent, comment = parsed[3], parsed[2]
-    return "%s%s=%s%s" % (indent, key, value, comment)
+            body = split_comment(template)[0]
+            raw = body[body.index("=") + 1:].strip(C_SPACE)
+    return "%s%s=%s%s" % (indent, key, _quote_for(str(value), raw), comment)
 
 
-def resolve_source(value, root):
-    """Resolve a ``source=`` path exactly like MangoWM's resolve_config_path()."""
-    value = value.strip()
+def expand_vars(value: str, variables: dict) -> str:
+    """Expand ``$name`` and ``${name}`` like MangoWM's expand_config_variables().
+    Unknown names are left as written."""
+    out, i, n = [], 0, len(value)
+    while i < n:
+        if value[i] == "$" and i + 1 < n:
+            if value[i + 1] == "{":
+                close = value.find("}", i + 2)
+                if close != -1:
+                    name = value[i + 2:close]
+                    if 0 < len(name) < 128 and name in variables:
+                        out.append(variables[name])
+                    else:
+                        out.append(value[i:close + 1])
+                    i = close + 1
+                    continue
+            elif value[i + 1].isascii() and (value[i + 1].isalpha() or value[i + 1] == "_"):
+                j = i + 1
+                while j < n and value[j].isascii() and (value[j].isalnum() or value[j] == "_"):
+                    j += 1
+                name = value[i + 1:j]
+                out.append(variables[name] if len(name) < 128 and name in variables
+                           else value[i:j])
+                i = j
+                continue
+        out.append(value[i])
+        i += 1
+    return "".join(out)
+
+
+VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def resolve_source(value: str, root: str) -> str:
+    """Resolve a ``source=`` path exactly like MangoWM's resolve_config_path().
+
+    ``./x`` is relative to the folder of the *root* config (``mango -c``'s
+    folder, or ~/.config/mango), not to the file that contains the line;
+    ``~`` and ``~/x`` use $HOME; anything else is used as written (absolute,
+    or relative to the current directory). Symlinks are not resolved here,
+    so a symlinked root config still resolves ``./x`` next to the link.
+    """
+    value = value.strip(C_SPACE)
     if value.startswith("./"):
         return os.path.join(os.path.dirname(root), value[2:])
     if value == "~" or value.startswith("~/"):
@@ -313,7 +490,25 @@ def resolve_source(value, root):
     return value
 
 
-def detect_root_config(explicit=None):
+def detect_format(path: str) -> str:
+    """"toml" or "conf", using MangoWM's detect_config_format() rules."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".toml", ".conf"):
+        return ext[1:]
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(65536)
+    except OSError:
+        return "conf"
+    for line in data.split(b"\n"):
+        stripped = line.lstrip(C_SPACE.encode())
+        if not stripped or stripped.startswith(b"#"):
+            continue
+        return "toml" if stripped.startswith(b"[") else "conf"
+    return "conf"
+
+
+def detect_root_config(explicit: str | None = None) -> tuple[str, str]:
     """Return (path, kind) of the config MangoWM will load.
 
     kind is "conf", "toml" (unsupported, read-only) or "new" (nothing exists yet).
@@ -321,8 +516,9 @@ def detect_root_config(explicit=None):
     """
     if explicit:
         path = os.path.abspath(os.path.expanduser(explicit))
-        kind = "toml" if path.lower().endswith(".toml") else "conf"
-        return path, kind
+        if not os.path.exists(path):
+            return path, "new"
+        return path, detect_format(path)
     conf = os.path.join(MANGO_DIR, "config.conf")
     toml = os.path.join(MANGO_DIR, "config.toml")
     if os.path.exists(conf):
@@ -335,86 +531,159 @@ def detect_root_config(explicit=None):
 class ConfigTree:
     """The MangoWM config: a root file plus everything it ``source``s.
 
-    MangoWM parses top to bottom, recursing into ``source=`` and
-    ``source_optional=`` lines, and the last assignment of a key wins. We
+    MangoWM parses top to bottom, recursing into ``source*=`` and
+    ``source_optional*=`` lines every time they appear (the same file may be
+    included several times), and the last assignment of a key wins. We
     always re-read from disk before changing anything, so edits made in an
     editor (or by another page) are never clobbered.
     """
 
-    def __init__(self, root):
+    def __init__(self, root: str):
         self.root = root
+        self.problems = []  # filled by scan()
 
-    def scan(self):
-        """Return (entries, files) in MangoWM parse order."""
-        entries, files, seen = [], [], set()
+    def scan(self) -> tuple[list, list]:
+        """Return (entries, files) in MangoWM parse order.
 
-        def walk(path, depth):
+        *files* lists every loaded file once (first occurrence). Problems
+        such as missing includes or cycles are stored in ``self.problems``.
+        """
+        entries, files, problems = [], [], []
+        canonical = {}   # realpath -> first path string seen for it
+        stack = []       # realpaths of the files being parsed right now
+        variables = {}
+
+        def walk(path, depth, origin, required):
             real = os.path.realpath(path)
-            if depth > 16 or real in seen or not os.path.isfile(path):
+            if real in stack:
+                problems.append(Problem(
+                    "cycle", path, origin,
+                    "%s includes itself (directly or through other files). MangoWM "
+                    "would loop forever on this; remove one of the source lines."
+                    % path))
                 return
-            seen.add(real)
-            files.append(path)
-            for idx, line in enumerate(read_lines(path)):
-                parsed = split_line(line)
-                if not parsed:
-                    continue
-                key, value = parsed[0], parsed[1]
-                if key in ("source", "source_optional"):
-                    walk(resolve_source(value, self.root), depth + 1)
-                    continue
-                entries.append(Entry(path, idx, key, value))
+            if depth > MAX_INCLUDE_DEPTH:
+                problems.append(Problem(
+                    "depth", path, origin,
+                    "includes are nested more than %d levels deep; %s was not read."
+                    % (MAX_INCLUDE_DEPTH, path)))
+                return
+            if not os.path.isfile(path):
+                if origin is not None and required:
+                    problems.append(Problem(
+                        "missing", path, origin,
+                        "%s is included with source= but doesn't exist. Create it or "
+                        "use source_optional=." % path))
+                return
+            try:
+                lines = read_lines(path)
+            except OSError as err:
+                problems.append(Problem("unreadable", path, origin,
+                                        "can't read %s: %s" % (path, describe_error(err))))
+                return
+            path = canonical.setdefault(real, path)
+            if path not in files:
+                files.append(path)
+            if detect_format(path) == "toml":
+                problems.append(Problem(
+                    "toml", path, origin,
+                    "%s is in TOML format; Mango Settings shows its settings but "
+                    "can't read or edit them." % path))
+                return
+            stack.append(real)
+            try:
+                for idx, line in enumerate(lines):
+                    parsed = split_line(line)
+                    if not parsed:
+                        continue
+                    key, raw = parsed[0], parsed[1]
+                    value = expand_vars(raw, variables)
+                    if key.startswith("source"):  # strncmp() prefix match, like MangoWM
+                        walk(resolve_source(value, self.root), depth + 1, (path, idx),
+                             not key.startswith("source_optional"))
+                        continue
+                    if key == "var" and "," in value:
+                        name, _, val = value.partition(",")
+                        name = name.strip(C_SPACE)
+                        if VAR_NAME_RE.match(name):
+                            variables[name] = val.strip(C_SPACE)
+                    entries.append(Entry(path, idx, key, value, raw))
+            finally:
+                stack.pop()
 
-        walk(self.root, 0)
+        walk(self.root, 0, None, True)
+        self.problems = problems
         return entries, files
 
-    def files(self):
+    def files(self) -> list:
+        """Every file MangoWM loads, in load order."""
         return self.scan()[1]
 
-    def values(self):
-        """Effective value of each key (last one wins)."""
+    def values(self) -> dict:
+        """Effective value of each key as MangoWM sees it (last one wins)."""
         return {e.key: e.value for e in self.scan()[0]}
 
-    def get(self, key, default=None):
+    def get(self, key: str, default=None):
         return self.values().get(key, default)
 
-    def set(self, key, value):
+    def set(self, key: str, value) -> str:
+        """Change *key* where it currently takes effect; returns the file written.
+
+        If that file isn't writable (e.g. a system file included with
+        ``source=/etc/...``) the assignment is appended to the root config
+        instead, which MangoWM parses last, so it still wins.
+        """
         value = str(value)
-        hits = [e for e in self.scan()[0] if e.key == key]
-        if hits:
+        for _attempt in range(3):
+            hits = [e for e in self.scan()[0] if e.key == key]
+            if not hits:
+                return self._append_root(key, value)
             e = hits[-1]
+            real = os.path.realpath(e.path)
+            if os.path.exists(real) and not os.access(real, os.W_OK) and e.path != self.root:
+                return self._append_root(key, value)
             lines = read_lines(e.path)
-            if lines[e.idx] == format_line(key, value, lines[e.idx]):
-                return e.path
-            lines[e.idx] = format_line(key, value, lines[e.idx])
-            write_lines(e.path, lines)
+            current = split_line(lines[e.idx]) if e.idx < len(lines) else None
+            if not current or current[0] != key:
+                continue  # file changed between scan and read: rescan
+            new = format_line(key, value, lines[e.idx])
+            if lines[e.idx] != new:
+                lines[e.idx] = new
+                write_lines(e.path, lines)
             return e.path
+        raise ConfigError("%s keeps changing on disk; not saved." % os.path.basename(self.root),
+                          self.root)
+
+    def _append_root(self, key, value):
         lines = read_lines(self.root)
-        lines.append("%s=%s" % (key, value))
+        lines.append(format_line(key, value))
         write_lines(self.root, lines)
         return self.root
 
-    def unset(self, key):
+    def unset(self, key: str) -> None:
         """Remove every assignment of *key* so MangoWM falls back to its default."""
         by_file = {}
         for e in self.scan()[0]:
-            if e.key == key:
-                by_file.setdefault(e.path, []).append(e.idx)
+            if e.key == key:  # a file included twice yields the same line twice
+                by_file.setdefault(e.path, set()).add(e.idx)
         for path, idxs in by_file.items():
             lines = read_lines(path)
+            idxs = [i for i in idxs if i < len(lines) and (split_line(lines[i]) or ("",))[0] == key]
             for i in sorted(idxs, reverse=True):
                 del lines[i]
-            write_lines(path, lines)
+            if idxs:
+                write_lines(path, lines)
 
-    def is_sourced(self, path):
+    def is_sourced(self, path: str) -> bool:
         real = os.path.realpath(path)
         return any(os.path.realpath(f) == real for f in self.files())
 
-    def add_source(self, path):
+    def add_source(self, path: str) -> None:
         """Append ``source=./name`` (or an absolute path) to the root config."""
         rel = os.path.relpath(path, os.path.dirname(self.root))
-        line = "source=./%s" % rel if not rel.startswith("..") else "source=%s" % path
+        target = "./%s" % rel if not rel.startswith("..") else os.path.abspath(path)
         lines = read_lines(self.root)
-        lines.append(line)
+        lines.append(format_line("source", target))
         write_lines(self.root, lines)
 
 
@@ -586,6 +855,32 @@ def icon_themes():
 
 def cursor_themes():
     return _list_theme_dirs(icon_bases(), lambda p: os.path.isdir(os.path.join(p, "cursors")))
+
+
+PAGE_NAMES = ("Appearance", "Animations", "Window behavior", "Layouts", "Keybindings",
+              "Workspaces", "Window rules", "Monitors", "Input devices", "Startup apps",
+              "Theming", "Notifications", "Config files", "System info")
+
+
+def check_config(root: str, out=sys.stdout) -> int:
+    """Print the files MangoWM loads and any include problems (for --check).
+    Returns a process exit code: 0 if nothing is wrong, 1 otherwise."""
+    tree = ConfigTree(root)
+    try:
+        entries, files = tree.scan()
+    except OSError as err:
+        out.write("error: %s\n" % describe_error(err))
+        return 1
+    if not files:
+        out.write("No config at %s (MangoWM uses its defaults).\n" % root)
+    for f in files:
+        out.write("%s\n" % f)
+    out.write("%d setting%s in %d file%s\n" % (len(entries), "" if len(entries) == 1 else "s",
+                                               len(files), "" if len(files) == 1 else "s"))
+    for p in tree.problems:
+        where = " (%s:%d)" % (p.origin[0], p.origin[1] + 1) if p.origin else ""
+        out.write("%s: %s%s\n" % ("note" if p.kind == "toml" else "problem", p.message, where))
+    return 1 if any(p.kind != "toml" for p in tree.problems) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -911,8 +1206,21 @@ if HAVE_GTK:
                 for key, info in self.items.items():
                     self._write_widget(key, values.get(key))
                     self._mark(key, key in values)
+                    info["row"].set_tooltip_text(self._problem(key, values.get(key)))
             finally:
                 self._loading = False
+
+        def _problem(self, key, value):
+            """Tooltip for values MangoWM would not read as the widget shows them."""
+            kind = self.items[key]["item"][2]
+            if value is None or kind not in ("int", "float"):
+                return None
+            try:
+                float(value)
+            except ValueError:
+                return ("Your config has %s=%s, which isn't a number. MangoWM reads only "
+                        "its leading digits (0 if there are none)." % (key, value))
+            return None
 
         def _mark(self, key, explicit):
             info = self.items[key]
@@ -942,14 +1250,14 @@ if HAVE_GTK:
                     path = self.app.tree.set(key, value)
                     self._mark(key, True)
                     self.app.saved(os.path.basename(path))
-            except OSError as err:
-                self.app.toast("Couldn't save %s: %s" % (key, err.strerror), error=True)
+            except (OSError, ValueError) as err:
+                self.app.toast("Couldn't save %s: %s" % (key, describe_error(err)), error=True)
 
         def _reset(self, key):
             try:
                 self.app.tree.unset(key)
             except OSError as err:
-                self.app.toast("Couldn't reset %s: %s" % (key, err.strerror), error=True)
+                self.app.toast("Couldn't reset %s: %s" % (key, describe_error(err)), error=True)
                 return
             self._loading = True
             self._write_widget(key, None)
@@ -1092,12 +1400,18 @@ if HAVE_GTK:
                 if e.key == "key_mode":
                     mode = e.value or "default"
                     continue
-                if not self._key_re.match(e.key):
-                    continue
+                if not self._key_re.match(e.key) or (e.path, e.idx) in self.originals:
+                    continue  # a file sourced twice yields the same line twice
                 if e.path not in cache:
-                    cache[e.path] = read_lines(e.path)
-                self.originals[(e.path, e.idx)] = cache[e.path][e.idx]
-                rows.append([e.path, e.idx, e.key] + self._pad(self.split(e.key, e.value))
+                    try:
+                        cache[e.path] = read_lines(e.path)
+                    except OSError:
+                        cache[e.path] = []
+                if e.idx >= len(cache[e.path]):
+                    continue
+                cols = self._pad(self.split(e.key, e.raw))
+                self.originals[(e.path, e.idx)] = (cache[e.path][e.idx], e.key, cols)
+                rows.append([e.path, e.idx, e.key] + cols
                             + ["", self._file_label(e.path), mode])
             for row in rows:
                 self.store.append(row)
@@ -1241,13 +1555,21 @@ if HAVE_GTK:
                 path, idx, key = r[0], r[1], r[2]
                 cols = [r[3 + i] for i in range(self.ncols)]
                 if idx < 0:
-                    new_rows.append("%s=%s" % (key, self.join(key, cols)))
+                    try:
+                        new_rows.append(format_line(key, self.join(key, cols)))
+                    except ValueError as err:
+                        self.app.toast("Couldn't save %s: %s" % (key, err), error=True)
+                        return False
                     continue
                 present.add((path, idx))
-                orig = self.originals[(path, idx)]
-                text = format_line(key, self.join(key, cols), orig)
-                if text != orig:
-                    edits.setdefault(path, {})[idx] = text
+                orig, orig_key, orig_cols = self.originals[(path, idx)]
+                if key == orig_key and cols == orig_cols:
+                    continue  # untouched: keep the line byte for byte
+                try:
+                    edits.setdefault(path, {})[idx] = format_line(key, self.join(key, cols), orig)
+                except ValueError as err:
+                    self.app.toast("Couldn't save %s: %s" % (key, err), error=True)
+                    return False
             for (path, idx) in self.originals:
                 if (path, idx) not in present:
                     edits.setdefault(path, {})[idx] = None
@@ -1272,7 +1594,7 @@ if HAVE_GTK:
                         out.extend(new_rows)
                     write_lines(path, out)
             except OSError as err:
-                self.app.toast("Couldn't save: %s" % err.strerror, error=True)
+                self.app.toast("Couldn't save: %s" % describe_error(err), error=True)
                 return False
             self._set_dirty(False)
             self.refresh(force=True)
@@ -1369,8 +1691,10 @@ if HAVE_GTK:
                 script = self._script()
                 try:
                     os.chmod(script, os.stat(script).st_mode | 0o111)
-                except OSError:
-                    pass
+                except OSError as err:
+                    self.app.toast("Couldn't make %s executable: %s. MangoWM can't run it until "
+                                   "you do (chmod +x)." % (os.path.basename(script),
+                                                          describe_error(err)), error=True)
                 self.add_row("exec_once", [script.replace(HOME, "~", 1)], start_editing=False)
                 bar.hide()
             elif resp == 2:
@@ -1492,12 +1816,22 @@ if HAVE_GTK:
             self.orphan_bar.set_no_show_all(True)
             self.pack_start(self.orphan_bar, False, False, 0)
 
+            # missing includes, cycles, unreadable files: MangoWM loads these
+            # differently than the file list suggests, so say so.
+            self.problem_bar = Gtk.InfoBar(message_type=Gtk.MessageType.WARNING)
+            self.problem_label = Gtk.Label(wrap=True, xalign=0, selectable=True)
+            self.problem_bar.get_content_area().add(self.problem_label)
+            self.problem_bar.set_no_show_all(True)
+            self.pack_start(self.problem_bar, False, False, 0)
+
             sc = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, vexpand=True, hexpand=True)
             sc.set_min_content_height(300)
             self.buf = Gtk.TextBuffer()
             self.buf.connect("modified-changed", lambda *_: self._update_buttons())
             tv = Gtk.TextView(buffer=self.buf, monospace=True, wrap_mode=Gtk.WrapMode.NONE,
                               left_margin=8, top_margin=6)
+            self.view = tv
+            self.readonly_reason = None
             sc.add(tv)
             self.pack_start(sc, True, True, 0)
             bottom = Gtk.Box(spacing=6)
@@ -1529,6 +1863,13 @@ if HAVE_GTK:
                 return
             files, orphans = self._choices()
             self._orphans = set(orphans)
+            problems = [p.message for p in self.app.tree.problems]
+            if problems:
+                self.problem_label.set_text("\n".join(problems))
+                self.problem_bar.show()
+                self.problem_label.show()
+            else:
+                self.problem_bar.hide()
             current = self.path
             self.combo.handler_block_by_func(self._on_pick)
             self.combo.remove_all()
@@ -1565,8 +1906,24 @@ if HAVE_GTK:
 
         def _load(self, path):
             self.path = path
-            self.buf.set_text(read_first(path) if path else "")
+            self.readonly_reason = None
+            text = ""
+            if path:
+                try:
+                    with open(path, "rb") as fh:
+                        text = fh.read().decode("utf-8")
+                except FileNotFoundError:
+                    text = ""
+                except UnicodeDecodeError:
+                    self.readonly_reason = ("isn't valid UTF-8, so it's shown read-only here "
+                                            "to avoid corrupting it. Use Open in editor.")
+                    with open(path, "rb") as fh:
+                        text = fh.read().decode("utf-8", errors="replace")
+                except OSError as err:
+                    self.readonly_reason = "can't be read: %s" % describe_error(err)
+            self.buf.set_text(text)
             self.buf.set_modified(False)
+            self.view.set_editable(self.readonly_reason is None)
             self.stamp = file_stamp(path) if path else None
             if path in getattr(self, "_orphans", ()):
                 self.orphan_label.set_text(
@@ -1580,12 +1937,15 @@ if HAVE_GTK:
             self._update_buttons()
 
         def _update_buttons(self):
-            self.save_btn.set_sensitive(bool(self.path) and self.buf.get_modified())
-            self.info.set_text(("Unsaved changes · " if self.buf.get_modified() else "")
-                               + (self._label(self.path) if self.path else ""))
+            self.save_btn.set_sensitive(bool(self.path) and self.buf.get_modified()
+                                        and self.readonly_reason is None)
+            label = self._label(self.path) if self.path else ""
+            if self.path and self.readonly_reason:
+                label = "%s %s" % (os.path.basename(self.path), self.readonly_reason)
+            self.info.set_text(("Unsaved changes · " if self.buf.get_modified() else "") + label)
 
         def is_dirty(self):
-            return bool(self.path) and self.buf.get_modified()
+            return bool(self.path) and self.buf.get_modified() and self.readonly_reason is None
 
         def save(self):
             if not self.is_dirty():
@@ -1604,7 +1964,7 @@ if HAVE_GTK:
             try:
                 write_text(self.path, self.buf.get_text(start, end, False))
             except OSError as err:
-                self.app.toast("Couldn't save: %s" % err.strerror, error=True)
+                self.app.toast("Couldn't save: %s" % describe_error(err), error=True)
                 return False
             self.buf.set_modified(False)
             self.stamp = file_stamp(self.path)
@@ -1615,7 +1975,7 @@ if HAVE_GTK:
             try:
                 self.app.tree.add_source(self.path)
             except OSError as err:
-                self.app.toast("Couldn't update config: %s" % err.strerror, error=True)
+                self.app.toast("Couldn't update config: %s" % describe_error(err), error=True)
                 return
             self.app.saved(None, "%s is now included" % os.path.basename(self.path))
             self.refresh(force=True)
@@ -1626,7 +1986,11 @@ if HAVE_GTK:
 
         def _open_backups(self):
             folder = backup_dir()
-            os.makedirs(folder, exist_ok=True)
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except OSError as err:
+                self.app.toast("Couldn't open backups: %s" % describe_error(err), error=True)
+                return
             open_path(folder, self.app)
 
     class ThemingPage(Page):
@@ -1847,6 +2211,7 @@ if HAVE_GTK:
         ("Config files", "document-edit-symbolic", ConfigFilesPage),
         ("System info", "dialog-information-symbolic", SystemInfoPage),
     ]
+    assert tuple(n for n, _i, _f in PAGES) == PAGE_NAMES
 
     class Prefs:
         """Small INI file for the app's own preferences."""
@@ -2033,10 +2398,18 @@ if HAVE_GTK:
 
                 def respond(bar, rid):
                     if rid == 1 and system:
+                        if os.path.exists(self.tree.root):
+                            self.toast("%s exists now; not overwriting it." % root, error=True)
+                            bar.hide()
+                            self.kind = "conf"
+                            self.refresh_all(force=True)
+                            return
                         try:
-                            write_text(self.tree.root, read_first(system))
+                            with open(system, "rb") as fh:
+                                text = fh.read().decode("utf-8", errors="surrogateescape")
+                            write_text(self.tree.root, text)
                         except OSError as err:
-                            self.toast("Couldn't copy: %s" % err.strerror, error=True)
+                            self.toast("Couldn't copy: %s" % describe_error(err), error=True)
                             return
                         self.kind = "conf"
                         self.refresh_all(force=True)
@@ -2211,9 +2584,10 @@ if HAVE_GTK:
                     return True
                 if resp == Gtk.ResponseType.YES and not all(p.save() for p in dirty):
                     return True
-            w, h = self.get_size()
-            self.prefs.set("width", w)
-            self.prefs.set("height", h)
+            if not self.is_maximized():
+                w, h = self.get_size()
+                self.prefs.set("width", w)
+                self.prefs.set("height", h)
             self.prefs.set("page", self.stack.get_visible_child_name() or "Appearance")
             self.prefs.save()
             return False
@@ -2245,17 +2619,35 @@ def main(argv=None):
     parser.add_argument("--page", help="open a specific page, e.g. Keybindings")
     parser.add_argument("--config", help="use another root config file (like `mango -c`)")
     parser.add_argument("--list-pages", action="store_true", help="print page names and exit")
+    parser.add_argument("--check", action="store_true",
+                        help="list the config files MangoWM loads, report missing includes "
+                             "and include loops, and exit (no GUI needed)")
     args = parser.parse_args(argv)
+    if args.list_pages:
+        print("\n".join(PAGE_NAMES))
+        return 0
+    if args.check:
+        return check_config(detect_root_config(args.config)[0])
     if not HAVE_GTK:
         sys.stderr.write(
-            "Mango Settings needs PyGObject with GTK 3 (%s).\n"
+            "Mango Settings needs PyGObject with GTK 3, which this Python (%s) can't "
+            "import: %s\n"
             "  Arch/Manjaro:  sudo pacman -S python-gobject gtk3\n"
             "  Debian/Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0\n"
-            "  Fedora:        sudo dnf install python3-gobject gtk3\n" % GTK_ERROR)
+            "  Fedora:        sudo dnf install python3-gobject gtk3\n"
+            "  openSUSE:      sudo zypper install python3-gobject python3-gobject-Gdk "
+            "typelib-1_0-Gtk-3_0\n"
+            "  Void:          sudo xbps-install python3-gobject gtk+3\n"
+            "  Alpine:        sudo apk add py3-gobject3 gtk+3.0\n"
+            "  NixOS:         nix run github:code-smith404/MangoWM-Settings\n"
+            "If they are installed, you may be running a different Python (a venv, "
+            "pyenv or conda); start it with /usr/bin/python3 instead.\n"
+            % (sys.executable, GTK_ERROR))
         return 1
-    if args.list_pages:
-        print("\n".join(name for name, _i, _f in PAGES))
-        return 0
+    if Gdk.Display.get_default() is None:
+        sys.stderr.write("Mango Settings can't open a display. Start it from inside your "
+                         "MangoWM session (WAYLAND_DISPLAY or DISPLAY must be set).\n")
+        return 1
     GLib.set_application_name("Mango Settings")
     GLib.set_prgname("mango-settings")
     return MangoSettingsApp(args).run([sys.argv[0]])

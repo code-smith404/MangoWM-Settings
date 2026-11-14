@@ -9,7 +9,7 @@
 
 let
   pythonEnv = python3.withPackages (ps: [ ps.pygobject3 ]);
-  version = "1.1.0";  # keep in sync with __version__ in mango-settings.py
+  version = "1.1.1";  # keep in sync with __version__ in mango-settings.py
 in
 stdenvNoCC.mkDerivation {
   pname = "mango-settings";

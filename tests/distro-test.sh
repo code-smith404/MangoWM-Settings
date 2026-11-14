@@ -18,9 +18,10 @@ sh ./install.sh --deps --system
 command -v mango-settings
 mango-settings --version
 mango-settings --list-pages >/dev/null
+HOME=/tmp mango-settings --check
 
 # The launcher points at the Python the installer chose; it must import GTK 3.
-py="$(sed -n 's/^exec "\([^"]*\)".*/\1/p' /usr/local/bin/mango-settings)"
+py="$(sed -n "s/^exec '\\([^']*\\)'.*/\\1/p" /usr/local/bin/mango-settings)"
 echo "launcher python: $py"
 "$py" -c 'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk; print("GTK", Gtk.get_major_version(), Gtk.get_minor_version())'
 "$py" -m unittest discover tests

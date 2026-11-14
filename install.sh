@@ -67,7 +67,37 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# A relative or ~ prefix would be baked into the launcher as-is and break later.
+case "$PREFIX" in
+  \~) PREFIX="$HOME" ;;
+  \~/*) PREFIX="$HOME/${PREFIX#\~/}" ;;
+esac
+case "$PREFIX" in
+  /*) ;;
+  "") die "--prefix needs a directory" ;;
+  *) PREFIX="$(pwd)/$PREFIX" ;;
+esac
+
 has() { command -v "$1" >/dev/null 2>&1; }
+# sq STRING: print STRING single-quoted for safe use in a generated script.
+sq() {
+  s=$1 r=
+  while :; do
+    case $s in
+      *\'*) r=$r${s%%\'*}\'\\\'\'; s=${s#*\'} ;;
+      *) r=$r$s; break ;;
+    esac
+  done
+  printf "'%s'" "$r"
+}
+# file_has FILE TEXT: does a line of FILE start with TEXT? (no grep: minimal systems)
+file_has() {
+  [ -f "$1" ] || return 1
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in "$2"*) return 0 ;; esac
+  done < "$1"
+  return 1
+}
 
 # --- privileges ----------------------------------------------------------------
 if [ "$(id -u)" -eq 0 ]; then ROOT=""
@@ -166,13 +196,39 @@ refresh_caches() {
   if has xdg-desktop-menu; then xdg-desktop-menu forceupdate >/dev/null 2>&1 || true; fi
 }
 
+MARKER="# Launcher for Mango Settings, created by install.sh"
+OLD_DESKTOP="$HOME/.local/share/applications/mango-settings.desktop"  # 1.0 manual install
+# Is $BIN something this installer (or `make install`) created?
+bin_is_ours() {
+  if [ -L "$BIN" ]; then
+    case "$(readlink "$BIN")" in */share/mango-settings/mango-settings.py) return 0 ;; esac
+    return 1
+  fi
+  file_has "$BIN" "$MARKER"
+}
+
 if [ "$ACTION" = "uninstall" ]; then
   bold "Removing Mango Settings from $PREFIX"
-  asroot rm -f "$BIN" "$DESKTOP" "$ICON"
-  asroot rm -rf "$SHARE"
-  rm -f "$HOME/.local/share/applications/mango-settings.desktop"  # 1.0 manual install
+  ours=0
+  if [ -e "$BIN" ] || [ -L "$BIN" ]; then
+    if bin_is_ours; then asroot rm -f "$BIN"; ours=1
+    else warn "$BIN wasn't created by this installer (a distro package?); left alone."
+    fi
+  fi
+  [ -f "$SHARE/mango-settings.py" ] && ours=1
+  if [ "$ours" -eq 1 ]; then
+    asroot rm -f "$SHARE/mango-settings.py" "$DESKTOP" "$ICON"
+    asroot rmdir "$SHARE" 2>/dev/null || true
+  fi
+  if file_has "$OLD_DESKTOP" "Exec=mango-settings" || file_has "$OLD_DESKTOP" "Exec=$HOME"; then
+    rm -f "$OLD_DESKTOP"
+  fi
   refresh_caches
-  ok "Uninstalled. Your MangoWM config and backups (~/.cache/mango-settings) were left alone."
+  if [ "$ours" -eq 1 ]; then
+    ok "Uninstalled. Your MangoWM config and backups (~/.cache/mango-settings) were left alone."
+  else
+    info "Mango Settings isn't installed in $PREFIX; nothing was removed."
+  fi
   exit 0
 fi
 
@@ -190,19 +246,27 @@ find_python() {
   return 1
 }
 
-LAUNCH=""   # how the wrapper starts the app
+APP="$SHARE/mango-settings.py"
+LAUNCH=""   # how the wrapper starts the app (paths are quoted with sq)
 if PY="$(find_python)"; then
-  LAUNCH="exec \"$PY\" \"$SHARE/mango-settings.py\" \"\$@\""
+  LAUNCH="exec $(sq "$PY") $(sq "$APP") \"\$@\""
 elif [ "$FAMILY" = nix ]; then
   has nix-shell || die "nix-shell not found"
   info "NixOS: the launcher will start Mango Settings through nix-shell (the first start downloads GTK)."
   info "For a native install use the flake: nix profile install github:$REPO"
-  LAUNCH="[ -n \"\${NIX_PATH:-}\" ] || export NIX_PATH=nixpkgs=channel:nixos-unstable
-exec nix-shell -p $NIX_PKGS --run \"python3 '$SHARE/mango-settings.py' \$*\""
+  # nix-shell --run takes one string, so the launcher re-quotes each argument.
+  case "$APP" in *[\"\$\`\\]*) die "on Nix the install prefix can't contain \" \$ \` or \\: $PREFIX" ;; esac
+  LAUNCH="$(cat <<'EOS'
+[ -n "${NIX_PATH:-}" ] || export NIX_PATH=nixpkgs=channel:nixos-unstable
+sq() { s=$1 r=; while :; do case $s in *\'*) r=$r${s%%\'*}\'\\\'\'; s=${s#*\'} ;; *) r=$r$s; break ;; esac; done; printf "'%s'" "$r"; }
+args=; for a in "$@"; do args="$args $(sq "$a")"; done
+EOS
+)
+exec nix-shell -p $NIX_PKGS --run \"python3 $(sq "$APP")\$args\""
   DEPS="skip"
 elif [ "$DEPS" = "skip" ]; then
   warn "Python 3 with PyGObject and GTK 3 was not found; installing anyway (--no-deps)."
-  LAUNCH="exec python3 \"$SHARE/mango-settings.py\" \"\$@\""
+  LAUNCH="exec python3 $(sq "$APP") \"\$@\""
 else
   c="$(deps_cmd)"
   [ -n "$c" ] || die "Mango Settings needs Python 3, PyGObject and GTK 3. Install them with your package manager and run this again."
@@ -227,13 +291,21 @@ else
     exit 0
   fi
   PY="$(find_python)" || die "PyGObject/GTK 3 still can't be imported. Check the output above."
-  LAUNCH="exec \"$PY\" \"$SHARE/mango-settings.py\" \"\$@\""
+  LAUNCH="exec $(sq "$PY") $(sq "$APP") \"\$@\""
 fi
 [ -n "${PY:-}" ] && ok "Using $PY ($("$PY" -c 'import sys; print("Python %d.%d" % sys.version_info[:2])'), GTK 3 found)"
 
 # --- fetch files -------------------------------------------------------------------
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+STAGED=""  # files copied next to their destination but not yet moved into place
+cleanup() {
+  rm -rf "$TMP"
+  for f in $STAGED; do asroot rm -f "$f" 2>/dev/null || true; done
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 HERE=""
 case "$0" in
@@ -255,31 +327,42 @@ fetch "data/$APP_ID.desktop" "$TMP/app.desktop"
 fetch "data/$APP_ID.svg" "$TMP/app.svg"
 # Plain sh only from here on: minimal systems (Nix containers, busybox) may lack sed/grep.
 IFS= read -r first < "$TMP/mango-settings.py" || first=""
-case "$first" in *python*) ;; *) die "downloaded file doesn't look like mango-settings.py" ;; esac
+case "$first" in *python*) ;; *) die "downloaded file doesn't look like mango-settings.py (check --ref $REF)" ;; esac
+file_has "$TMP/app.desktop" "[Desktop Entry]" || die "downloaded desktop file is invalid"
+[ -s "$TMP/app.svg" ] || die "downloaded icon is empty"
 version=""
 while IFS= read -r line; do
   case "$line" in '__version__ = "'*) version="${line#*\"}"; version="${version%\"*}"; break ;; esac
 done < "$TMP/mango-settings.py"
+[ -n "$version" ] || die "downloaded mango-settings.py has no version; not installing it"
 
-cat > "$TMP/launcher" <<EOF
-#!/bin/sh
-# Launcher for Mango Settings, created by install.sh
-$LAUNCH
-EOF
+printf '#!/bin/sh\n%s\n%s\n' "$MARKER" "$LAUNCH" > "$TMP/launcher"
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in Exec=*) printf 'Exec=%s\n' "$BIN" ;; *) printf '%s\n' "$line" ;; esac
 done < "$TMP/app.desktop" > "$TMP/final.desktop"
 
 # --- install -----------------------------------------------------------------------
-asroot mkdir -p "$SHARE" "$(dirname "$BIN")" "$(dirname "$DESKTOP")" "$(dirname "$ICON")"
-asroot cp "$TMP/mango-settings.py" "$SHARE/mango-settings.py"
-asroot rm -f "$BIN"
-asroot cp "$TMP/launcher" "$BIN"
-asroot cp "$TMP/final.desktop" "$DESKTOP"
-asroot cp "$TMP/app.svg" "$ICON"
-asroot chmod 755 "$SHARE/mango-settings.py" "$BIN"
-asroot chmod 644 "$DESKTOP" "$ICON"
-rm -f "$HOME/.local/share/applications/mango-settings.desktop"  # old 1.0 entry
+# Stage every file next to its destination, then rename them into place with
+# the launcher last, so a failed or interrupted install never leaves a
+# launcher pointing at a missing or half-written app.
+asroot mkdir -p "$SHARE" "$(dirname "$BIN")" "$(dirname "$DESKTOP")" "$(dirname "$ICON")" \
+  || die "can't create folders under $PREFIX"
+stage() {  # stage <src> <dest> <mode>
+  STAGED="$STAGED $2.new.$$"
+  { asroot cp "$1" "$2.new.$$" && asroot chmod "$3" "$2.new.$$"; } || die "can't write $2"
+}
+stage "$TMP/mango-settings.py" "$APP" 755
+stage "$TMP/final.desktop" "$DESKTOP" 644
+stage "$TMP/app.svg" "$ICON" 644
+stage "$TMP/launcher" "$BIN" 755
+for dest in "$APP" "$DESKTOP" "$ICON" "$BIN"; do
+  # mv replaces a symlink itself (e.g. from a 1.0 install), never its target
+  asroot mv -f "$dest.new.$$" "$dest" || die "can't install $dest"
+done
+STAGED=""
+if file_has "$OLD_DESKTOP" "Exec=mango-settings" || file_has "$OLD_DESKTOP" "Exec=$HOME"; then
+  rm -f "$OLD_DESKTOP"
+fi
 refresh_caches
 
 ok "Mango Settings ${version} installed into $PREFIX"

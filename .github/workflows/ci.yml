@@ -23,12 +23,22 @@ jobs:
       - run: python -m py_compile mango-settings.py
       - run: python -m unittest discover -v tests
       - run: python mango-settings.py --version
+      - name: CLI without GTK
+        run: |
+          python mango-settings.py --list-pages
+          HOME="$RUNNER_TEMP/home" python mango-settings.py --check
 
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -s sh install.sh tests/distro-test.sh
+      - run: shellcheck -s sh install.sh tests/distro-test.sh tests/check-versions.sh
+      - name: Versions match
+        run: sh tests/check-versions.sh
+      - name: Validate desktop file
+        run: |
+          sudo apt-get install -y -qq desktop-file-utils >/dev/null
+          desktop-file-validate data/io.github.code_smith404.MangoSettings.desktop
       - name: Oldest supported Python (3.8)
         run: docker run --rm -v "$PWD:/src" -w /src python:3.8-slim sh -c "python -m unittest discover tests && python mango-settings.py --version"
       - name: Install and uninstall into a temp prefix (dash)
@@ -37,6 +47,18 @@ jobs:
           test -x "$RUNNER_TEMP/pfx/bin/mango-settings"
           dash ./install.sh --prefix "$RUNNER_TEMP/pfx" --uninstall
           test ! -e "$RUNNER_TEMP/pfx/bin/mango-settings"
+          test ! -e "$RUNNER_TEMP/pfx/share/mango-settings"
+      - name: Prefix with spaces and quotes, and uninstall safety
+        run: |
+          p="$RUNNER_TEMP/it's a \"pfx\""
+          dash ./install.sh --no-deps --prefix "$p"
+          "$p/bin/mango-settings" --version
+          dash ./install.sh --prefix "$p" --uninstall
+          test ! -e "$p/bin/mango-settings"
+          mkdir -p "$RUNNER_TEMP/foreign/bin"
+          printf '#!/bin/sh\necho foreign\n' > "$RUNNER_TEMP/foreign/bin/mango-settings"
+          dash ./install.sh --prefix "$RUNNER_TEMP/foreign" --uninstall
+          test -e "$RUNNER_TEMP/foreign/bin/mango-settings"
       - name: make install
         run: |
           make install PREFIX=/usr DESTDIR="$RUNNER_TEMP/dest"

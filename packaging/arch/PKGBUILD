@@ -1,7 +1,7 @@
 # Maintainer: Harikesh Verma (code-smith404) <299116741+code-smith404@users.noreply.github.com>
 pkgname=mango-settings-git
 _pkgname=mango-settings
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="GNOME-style settings app for the MangoWM Wayland compositor"
 arch=('any')

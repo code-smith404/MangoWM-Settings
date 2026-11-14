@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.1.1 (2026-11-14)
+
+### Fixed
+
+- A file included more than once was only read the first time, so the app could show and edit a value that MangoWM overrides later. Includes are now read every time, in MangoWM's order, and the last assignment wins.
+- Include cycles were silently skipped, but MangoWM would hang on them. They are now reported, along with missing `source=` files and includes nested deeper than 32 levels.
+- `source` and `source_optional` keys, `$var` expansion, quote stripping, comment handling and `key=` lines now follow MangoWM's parser exactly. TOML files included from a `.conf` file are no longer parsed as `.conf`.
+- Values containing ` #` were cut off by MangoWM after saving. They are now quoted. Values MangoWM can't read (over 255 characters or with line breaks) are refused, and existing quotes are kept.
+- Files with non-UTF-8 bytes were corrupted on save, CRLF line endings and missing final newlines were changed, and form feeds were treated as line breaks. Files are now written back byte-for-byte except for the changed lines.
+- A failed backup was ignored and the file was changed anyway. A failed backup now stops the save. Backups are no longer hidden files.
+- Saving into an unwritable included file (for example a system file) failed. The setting is now added to your own config instead.
+- Removing a setting from a file that is included twice could delete the wrong line. The list pages (rules, monitors) rewrote lines you hadn't touched.
+- Unreadable included files crashed the app. Error messages are now always readable.
+- "Copy default config" could overwrite a config created in the meantime.
+- The window size was saved while maximized.
+- `--list-pages` needed GTK. A clear message is shown when there is no display.
+
+### Installer
+
+- A relative or `~` prefix produced a broken launcher. Paths with spaces or quotes are now quoted correctly, and the Nix launcher keeps arguments intact.
+- Ctrl-C didn't stop the installer. Interrupted installs no longer leave half-installed files, and downloaded files are checked before installing.
+- `--uninstall` removed whatever was at the target path. It now only removes files it installed and leaves distro packages alone.
+
+### Added
+
+- `--check` lists the files MangoWM reads and any include problems, without a display.
+- `make check-versions` and a CI check that the app, package and changelog versions match.
+
 ## 1.1.0 (2026-11-14)
 
 ### Fixed

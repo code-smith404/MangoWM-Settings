@@ -224,13 +224,14 @@ Settings in **bold** are set in your config. The others show MangoWM's built-in 
 ## Usage
 
 ```
-mango-settings [--page PAGE] [--config FILE] [--list-pages] [--version]
+mango-settings [--page PAGE] [--config FILE] [--check] [--list-pages] [--version]
 ```
 
 | Flag | Meaning |
 | --- | --- |
 | `--page Keybindings` | Open a specific page (see `--list-pages`) |
 | `--config FILE` | Edit a different root config, like `mango -c FILE` |
+| `--check` | List the files MangoWM would read and any include problems, without opening a window. Exits with 1 if there are problems |
 | `--list-pages` | Print the page names |
 | `--version` | Print the version |
 
@@ -247,9 +248,11 @@ bind=SUPER,i,spawn,mango-settings
 ## How your config is handled
 
 - **Same lookup as MangoWM.** It uses `~/.config/mango/config.conf`, or the file passed with `--config`.
-- **Included files are followed.** `source=` and `source_optional=` lines are read in order, with `./` relative to the config folder and `~/` meaning your home folder. A setting is changed where MangoWM actually reads it. If a key appears more than once, the last one wins, just like in MangoWM.
+- **Included files are followed.** `source=` and `source_optional=` lines are read in order, with `./` relative to the config folder and `~/` meaning your home folder. A setting is changed where MangoWM actually reads it. If a key appears more than once, the last one wins, just like in MangoWM. A file included twice is read twice, `$name` variables set with `var=` are expanded in values and paths, and a file that includes itself (which would hang MangoWM) is reported instead of followed. Missing `source=` files are reported on the **Config files** page. Missing `source_optional=` files are skipped silently.
 - **Your files stay yours.** Comments, blank lines, ordering and inline comments are kept, and only the lines you change are rewritten. Symlinks (for example from GNU Stow or a dotfiles repo) and file permissions are preserved. Writes are atomic, so a crash never leaves a half-written config.
-- **Backups.** Before the first change to a file in a session, a copy goes to `~/.cache/mango-settings/backups/<date-time>/`. You can open it from the **Config files** page.
+- **Backups.** Before the first change to a file in a session, a copy goes to `~/.cache/mango-settings/backups/<date-time>/`. You can open it from the **Config files** page. If the backup can't be written, the change is not saved.
+- **Values MangoWM can't read are refused.** Values longer than 255 characters or containing line breaks are not written, and values containing ` #` are quoted so MangoWM doesn't treat the rest as a comment.
+- **Unusual files are left untouched.** Files that aren't valid UTF-8 are shown read-only, and Windows (CRLF) line endings and a missing final newline are kept.
 - **External edits are detected.** Files are re-read before every write. If a file changed on disk while you had unsaved list edits, the app asks before overwriting.
 - **Applying changes.** MangoWM reloads its config automatically when `auto_reload_config` is on (the default). Otherwise press **Reload MangoWM**, which runs `mmsg dispatch reload_config`.
 - **TOML configs** (`config.toml`) are shown read-only for now. Use the **Config files** page to edit them.
@@ -290,6 +293,7 @@ Restore the copy from `~/.cache/mango-settings/backups/`. Every file is backed u
 ```bash
 make test                               # config engine tests, no display needed
 make lint                               # pyflakes + shellcheck
+make check-versions                     # app, package and changelog versions match
 docker run --rm -v "$PWD:/src" fedora sh /src/tests/distro-test.sh   # installer test in a distro container
 ```
 
