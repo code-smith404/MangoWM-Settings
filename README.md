@@ -21,52 +21,79 @@
 
 ## Install
 
-One command, no clone needed:
+One command for any distro, no clone needed:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
 ```
 
 <details>
 <summary>Using <code>wget</code> instead</summary>
 
-```bash
-wget -qO- https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | bash
+```sh
+wget -qO- https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
 ```
 </details>
 
-The installer:
+The installer is plain POSIX `sh`, so it also runs where `bash` isn't installed (Alpine, minimal Void, Debian's `dash`). It:
 
-1. checks for Python 3, PyGObject and GTK 3, and offers to install them if they're missing (pacman, apt, dnf, zypper, xbps, apk),
-2. installs the app into `~/.local` with no root needed:
+1. detects your distro from `/etc/os-release`, including derivatives such as Mint, Pop!_OS, EndeavourOS and CachyOS,
+2. finds a Python that can load GTK 3, or offers to install PyGObject and GTK 3 with your package manager (using `sudo`, `doas` or `run0`),
+3. installs the app into `~/.local` with no root needed:
    - `~/.local/share/mango-settings/mango-settings.py`
-   - `~/.local/bin/mango-settings`
-   - a launcher entry and icon, so it shows up in fuzzel, wofi, rofi and other app launchers
-3. tells you if `~/.local/bin` isn't in your `PATH`.
+   - `~/.local/bin/mango-settings`, a small launcher that uses the Python it found, so pyenv, conda or a virtualenv on your `PATH` can't break it
+   - a menu entry and icon, so it shows up in fuzzel, wofi, rofi and other app launchers
+4. tells you if `~/.local/bin` isn't in your `PATH`.
 
 Then run `mango-settings`, or open **Mango Settings** from your launcher. To update, run the same command again.
 
+### Supported distros
+
+Every distro marked "tested in CI" is installed into a fresh container on each change ([workflow](.github/workflows/ci.yml)).
+
+| Family | Distros | Dependencies installed | Status |
+| --- | --- | --- | --- |
+| Arch | Arch, Manjaro, EndeavourOS, CachyOS, Garuda, Artix | `pacman -S python python-gobject gtk3` | tested in CI (Arch, Manjaro) |
+| Debian | Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin, Kali | `apt-get install python3 python3-gi gir1.2-gtk-3.0` | tested in CI (Debian, Ubuntu 22.04 and latest) |
+| Fedora / RHEL | Fedora, Nobara, RHEL, CentOS Stream, Rocky, AlmaLinux | `dnf install python3 python3-gobject gtk3` | tested in CI (Fedora, AlmaLinux 9) |
+| Fedora Atomic | Silverblue, Kinoite, Sway Atomic | `rpm-ostree install python3-gobject gtk3` (then reboot) | supported, not tested in CI |
+| openSUSE | Tumbleweed, Leap, SLE | `zypper install python3-gobject python3-gobject-Gdk typelib-1_0-Gtk-3_0` | tested in CI (Tumbleweed, Leap 16) |
+| Void | Void (glibc and musl) | `xbps-install python3-gobject gtk+3` | tested in CI |
+| Alpine | Alpine, postmarketOS, Chimera | `apk add python3 py3-gobject3 gtk+3.0` | tested in CI |
+| Gentoo | Gentoo, Funtoo | `emerge dev-python/pygobject:3 x11-libs/gtk+:3` | supported, not tested in CI |
+| Solus | Solus | `eopkg install python3-gobject gtk3` | supported, not tested in CI |
+| NixOS | NixOS, Nix on any distro | the flake, or a `nix-shell` launcher | flake built in CI |
+
+To see what the installer would run on your system without changing anything:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh -s -- --print-deps
+```
+
+If your distro isn't detected, set `MANGO_SETTINGS_FAMILY` to one of `arch`, `debian`, `fedora`, `ostree`, `suse`, `void`, `alpine`, `gentoo`, `solus` or `nix`, for example `... | MANGO_SETTINGS_FAMILY=debian sh`.
+
 ### Installer options
 
-Pass options with `bash -s --`:
+Pass options with `sh -s --`:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | bash -s -- --system
+```sh
+curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh -s -- --system
 ```
 
 | Option | What it does |
 | --- | --- |
-| `--system` | Install for all users into `/usr/local` (uses `sudo`) |
+| `--system` | Install for all users into `/usr/local` (uses `sudo`, `doas` or `run0`) |
 | `--prefix DIR` | Install into `DIR` instead of `~/.local` |
 | `--ref REF` | Install a specific branch or tag (default `main`) |
 | `--deps` | Install missing dependencies without asking |
 | `--no-deps` | Skip the dependency check |
+| `--print-deps` | Show the detected distro and the dependency command, then exit |
 | `--uninstall` | Remove Mango Settings (use the same `--prefix`/`--system` you installed with) |
 
 ### Uninstall
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | bash -s -- --uninstall
+```sh
+curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh -s -- --uninstall
 ```
 
 Your MangoWM config is never touched by uninstalling.
@@ -75,15 +102,68 @@ Your MangoWM config is never touched by uninstalling.
 
 Run it straight from GitHub; nothing is written to disk except your own config changes:
 
-```bash
+```sh
 curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/mango-settings.py | python3 -
 ```
 
-You can pass flags too: `... | python3 - --page Keybindings`.
+You can pass flags too: `... | python3 - --page Keybindings`. This needs PyGObject and GTK 3 (see [Requirements](#requirements)).
+
+On NixOS or anywhere with Nix flakes:
+
+```sh
+nix run github:code-smith404/MangoWM-Settings
+```
+
+### Packages
+
+<details>
+<summary>Arch Linux (PKGBUILD)</summary>
+
+An AUR-ready [`PKGBUILD`](packaging/arch/PKGBUILD) for `mango-settings-git` is included:
+
+```sh
+git clone https://github.com/code-smith404/MangoWM-Settings.git
+cd MangoWM-Settings/packaging/arch
+makepkg -si
+```
+</details>
+
+<details>
+<summary>NixOS (flake)</summary>
+
+Install into your profile:
+
+```sh
+nix profile install github:code-smith404/MangoWM-Settings
+```
+
+Or add it to your system flake:
+
+```nix
+{
+  inputs.mango-settings.url = "github:code-smith404/MangoWM-Settings";
+  # ...
+  environment.systemPackages = [ inputs.mango-settings.packages.${pkgs.system}.default ];
+}
+```
+
+An overlay is available as `overlays.default`.
+</details>
+
+<details>
+<summary>Other distros and packagers (Makefile)</summary>
+
+```sh
+git clone https://github.com/code-smith404/MangoWM-Settings.git
+cd MangoWM-Settings
+sudo make install PREFIX=/usr          # or: make install PREFIX=/usr DESTDIR="$pkgdir"
+sudo make uninstall PREFIX=/usr
+```
+</details>
 
 ### Manual install
 
-```bash
+```sh
 git clone https://github.com/code-smith404/MangoWM-Settings.git
 cd MangoWM-Settings
 ./mango-settings.py        # run from the clone
@@ -92,16 +172,22 @@ cd MangoWM-Settings
 
 ### Requirements
 
-MangoWM, Python 3.8+, PyGObject and GTK 3. `mmsg` (part of MangoWM) is used for reloading and for detecting monitors.
+MangoWM, Python 3.8+, PyGObject and GTK 3. Optional:
+- `mmsg` (part of MangoWM), for reloading and detecting monitors
+- `gsettings` (from GLib), for the Theming page
 
 | Distro | Command |
 | --- | --- |
-| Arch / Manjaro / EndeavourOS | `sudo pacman -S --needed python-gobject gtk3` |
-| Debian / Ubuntu | `sudo apt install python3-gi gir1.2-gtk-3.0` |
-| Fedora | `sudo dnf install python3-gobject gtk3` |
+| Arch / Manjaro / EndeavourOS / CachyOS | `sudo pacman -S --needed python-gobject gtk3` |
+| Debian / Ubuntu / Mint / Pop!_OS | `sudo apt install python3-gi gir1.2-gtk-3.0` |
+| Fedora / RHEL / Rocky / Alma | `sudo dnf install python3-gobject gtk3` |
+| Fedora Atomic | `rpm-ostree install python3-gobject gtk3` |
 | openSUSE | `sudo zypper install python3-gobject python3-gobject-Gdk typelib-1_0-Gtk-3_0` |
 | Void | `sudo xbps-install python3-gobject gtk+3` |
-| Alpine | `sudo apk add py3-gobject3 gtk+3.0` |
+| Alpine / postmarketOS | `doas apk add py3-gobject3 gtk+3.0` |
+| Gentoo | `sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3` |
+| Solus | `sudo eopkg install python3-gobject gtk3` |
+| NixOS | `nix run github:code-smith404/MangoWM-Settings` |
 
 ## Pages
 
@@ -174,7 +260,7 @@ bind=SUPER,i,spawn,mango-settings
 <details>
 <summary><code>ModuleNotFoundError: No module named 'gi'</code> or <code>Namespace Gtk not available</code></summary>
 
-PyGObject or GTK 3 is missing. Install them with the command for your distro from [Requirements](#requirements). If you use pyenv, conda or a virtualenv, run the app with your system Python (`/usr/bin/python3`), because PyGObject is installed there.
+PyGObject or GTK 3 is missing. Install them with the command for your distro from [Requirements](#requirements), or run the installer, which does it for you. If you use pyenv, conda or a virtualenv, run the app with your system Python (`/usr/bin/python3`), because that's where your distro installs PyGObject. The installed `mango-settings` launcher already does this.
 </details>
 
 <details>
@@ -202,9 +288,9 @@ Restore the copy from `~/.cache/mango-settings/backups/`. Every file is backed u
 ## Development
 
 ```bash
-python3 -m unittest discover tests      # config engine tests, no display needed
-python3 -m pyflakes mango-settings.py   # lint
-shellcheck install.sh
+make test                               # config engine tests, no display needed
+make lint                               # pyflakes + shellcheck
+docker run --rm -v "$PWD:/src" fedora sh /src/tests/distro-test.sh   # installer test in a distro container
 ```
 
 The config engine (parsing, `source` resolution, writing) is plain Python and has no GTK dependency, so it can be tested on its own. Bug reports and pull requests are welcome.

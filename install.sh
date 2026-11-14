@@ -253,15 +253,22 @@ fetch() {  # fetch <path-in-repo> <dest>
 fetch mango-settings.py "$TMP/mango-settings.py"
 fetch "data/$APP_ID.desktop" "$TMP/app.desktop"
 fetch "data/$APP_ID.svg" "$TMP/app.svg"
-head -n 1 "$TMP/mango-settings.py" | grep -q python || die "downloaded file doesn't look like mango-settings.py"
-version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$TMP/mango-settings.py")"
+# Plain sh only from here on: minimal systems (Nix containers, busybox) may lack sed/grep.
+IFS= read -r first < "$TMP/mango-settings.py" || first=""
+case "$first" in *python*) ;; *) die "downloaded file doesn't look like mango-settings.py" ;; esac
+version=""
+while IFS= read -r line; do
+  case "$line" in '__version__ = "'*) version="${line#*\"}"; version="${version%\"*}"; break ;; esac
+done < "$TMP/mango-settings.py"
 
 cat > "$TMP/launcher" <<EOF
 #!/bin/sh
 # Launcher for Mango Settings, created by install.sh
 $LAUNCH
 EOF
-sed "s|^Exec=.*|Exec=$BIN|" "$TMP/app.desktop" > "$TMP/final.desktop"
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in Exec=*) printf 'Exec=%s\n' "$BIN" ;; *) printf '%s\n' "$line" ;; esac
+done < "$TMP/app.desktop" > "$TMP/final.desktop"
 
 # --- install -----------------------------------------------------------------------
 asroot mkdir -p "$SHARE" "$(dirname "$BIN")" "$(dirname "$DESKTOP")" "$(dirname "$ICON")"

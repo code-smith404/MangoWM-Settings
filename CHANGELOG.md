@@ -26,7 +26,14 @@
 
 ### Added
 
-- Online installer (`install.sh`): `curl ... | bash`, with `--system`, `--prefix`, `--ref`, `--deps` and `--uninstall`, plus a dependency check for major distros.
+- Online installer (`install.sh`): `curl ... | sh`, with `--system`, `--prefix`, `--ref`, `--deps`, `--print-deps` and `--uninstall`.
+- Multi-distro support:
+  - the installer is POSIX `sh`, detects the distro from `/etc/os-release` (including derivatives) and installs dependencies with pacman, apt, dnf/yum, rpm-ostree, zypper, xbps, apk, emerge or eopkg, using `sudo`, `doas` or `run0`
+  - the launcher always uses a Python that can load GTK 3, so pyenv or conda on `PATH` can't break it
+  - NixOS: a flake (`nix run github:code-smith404/MangoWM-Settings`) and a `nix-shell` launcher fallback
+  - a Makefile with `PREFIX`/`DESTDIR` for packagers, and an Arch `PKGBUILD`
+  - the default MangoWM config is found on more distros (`/usr/etc` on openSUSE, NixOS, custom prefixes); CPU names on ARM boards; themes from Nix profiles and Flatpak
+  - CI installs the app in Arch, Manjaro, Debian, Ubuntu, Fedora, AlmaLinux, openSUSE, Void and Alpine containers
 - Run without installing: `curl ... | python3 -`.
 - App icon and a proper desktop entry (`io.github.code_smith404.MangoSettings`).
 - Per-setting reset buttons. Settings set in your config are shown in bold.

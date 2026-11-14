@@ -5,11 +5,11 @@ set -eu
 cd /src
 # shellcheck disable=SC1091
 . /etc/os-release
-echo "=== $PRETTY_NAME"
+echo "=== ${PRETTY_NAME:-unknown}"
 
 # Fresh container images ship without package databases; real systems have them.
-case " $ID $ID_LIKE " in
-  *" arch "*) pacman -Sy --noconfirm >/dev/null ;;
+case " ${ID:-} ${ID_LIKE:-} " in
+  *" arch "*) pacman -Syu --noconfirm >/dev/null ;;  # old images + -Sy = partial upgrade
   *" void "*) xbps-install -Syu -y xbps >/dev/null ;;
 esac
 
@@ -28,5 +28,7 @@ test -f /usr/local/share/applications/io.github.code_smith404.MangoSettings.desk
 test -f /usr/local/share/icons/hicolor/scalable/apps/io.github.code_smith404.MangoSettings.svg
 
 sh ./install.sh --system --uninstall
-if command -v mango-settings; then echo "still installed after uninstall"; exit 1; fi
-echo "=== $PRETTY_NAME: OK"
+if [ -e /usr/local/bin/mango-settings ] || [ -e /usr/local/share/mango-settings ]; then
+  echo "still installed after uninstall"; exit 1
+fi
+echo "=== ${PRETTY_NAME:-unknown}: OK"
