@@ -6,7 +6,7 @@ set -u
 
 REPO_URL="https://github.com/code-smith404/MangoWM-Settings"
 RAW_BASE="https://raw.githubusercontent.com/code-smith404/MangoWM-Settings"
-REF="master"
+REF="main"
 PREFIX="${HOME}/.local"
 SYSTEM=0
 DO_DEPS=1

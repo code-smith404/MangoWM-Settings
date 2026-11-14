@@ -1136,14 +1136,17 @@ def run_gui(args):
             super().__init__(app)
 
         def rules(self):
-            return self.app.rule_file(self.rule_file_attr).records(self.record_name)
+            return self.app.rule_file(self.rule_file_attr()).records(self.record_name)
 
         def build(self):
             self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
             self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
             frame = self.add_frame()
             frame.add(self.listbox)
-            btns = Gtk.ButtonBox(spacing=6, layout=Gtk.ButtonBoxStyle.START)
+            # Newer PyGObject overrides no longer accept "layout" as a
+            # constructor kwarg; set the layout style explicitly instead.
+            btns = Gtk.ButtonBox(spacing=6)
+            btns.set_layout(Gtk.ButtonBoxStyle.START)
             add = Gtk.Button(label="Add")
             add.connect("clicked", self.on_add)
             btns.add(add)
@@ -1721,7 +1724,9 @@ def run_gui(args):
                 act = Gio.SimpleAction.new(label, None)
                 act.connect("activate", lambda a, p, h=handler: h())
                 self.window.add_action(act)
-                self.window.set_accels_for_action("win." + label, accels)
+                # In GTK 3 accelerators are registered on the Gtk.Application,
+                # with the action scope prefix ("win." for window-scoped actions).
+                self.gtk_app.set_accels_for_action("win." + label, accels)
                 self.win_actions[label] = act
 
         # -- config plumbing ---------------------------------------------------
@@ -1942,10 +1947,21 @@ def main(argv=None):
         for key in PAGE_ORDER:
             print(PAGE_TITLES[key])
         return 0
-    if args.page and args.page not in PAGE_ORDER:
-        sys.stderr.write("Unknown page %r. Valid pages:\n%s\n" %
-                         (args.page, "\n".join("  " + PAGE_TITLES[k] for k in PAGE_ORDER)))
-        return 2
+    if args.page:
+        page = args.page.strip().lower()
+        if page not in PAGE_ORDER:
+            # Also accept the human-readable page titles, case-insensitively
+            # (e.g. "Appearance", "Window behavior", "window-behavior").
+            page = page.replace("-", " ").replace("_", " ")
+            for key in PAGE_ORDER:
+                if PAGE_TITLES[key].lower() == page or key == page:
+                    break
+            else:
+                sys.stderr.write("Unknown page %r. Valid pages:\n%s\n" %
+                                 (args.page, "\n".join("  " + t + " (key: %s)" % k
+                                  for k, t in ((k, PAGE_TITLES[k]) for k in PAGE_ORDER))))
+                return 2
+        args.page = page
     if args.check:
         return cmd_check(MangoConfig(root=args.config))
     return run_gui(args)

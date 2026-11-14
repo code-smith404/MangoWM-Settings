@@ -29,7 +29,7 @@ Python file, GTK 3, no bloat.
 ### One-liner (works on Alpine, Void, Debian, Fedora, Arch, openSUSE)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
 ```
 
 The installer installs into `~/.local` by default. Options:
