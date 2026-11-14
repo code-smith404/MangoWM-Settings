@@ -10,7 +10,10 @@ Python file, GTK 3, no bloat.
   Window behavior, Layouts, Keybindings, Workspaces, Window rules, Monitors,
   Input devices, Startup apps, Theming, Background, Notifications, Config
   files, System info
-- **Chromeless window** — no title bar; search, theme and the
+- **Chromeless, blurred window** — no title bar; the surface is translucent so
+  MangoWM's blur (`blur=1`) shows the desktop through it, with rounded
+  corners. A **Blur** checkbox in the sidebar toggles the effect (remembered
+  in `~/.config/mango-settings/settings.ini`). Search, theme and the
   Save / Reload Mango / Quit controls live in the sidebar; size and sidebar
   width are remembered
 - **Dark / light / system theme** for the app itself

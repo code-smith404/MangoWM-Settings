@@ -12,7 +12,7 @@
     {
       packages = forAllSystems (pkgs:
         let
-          version = "2.2.1";
+          version = "2.2.2";
         in
         rec {
           mango-settings = pkgs.python3Packages.buildPythonApplication {

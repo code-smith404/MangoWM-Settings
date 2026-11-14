@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.2.2 — blurred, translucent window
+
+- **The window now gets a soft blur effect.** It is drawn as a translucent
+  surface (RGBA visual + semi-transparent CSS), so MangoWM's own blur —
+  `blur=1` in `config.conf` — blurs whatever is behind it, with rounded
+  corners to match. Everything is derived from the GTK theme via
+  `alpha(@theme_bg_color, 0.8)`, so it follows light/dark themes.
+- **“Blur” checkbox** next to the theme selector in the sidebar turns the
+  effect on/off; the choice is remembered in
+  `~/.config/mango-settings/settings.ini` (`[ui] blur = 1|0`).
+- Falls back to a fully opaque window when no compositor is present, so the
+  app never renders a see-through screen in a bare X session.
+- Sidebar rows, frames/cards and buttons got matching rounded, translucent
+  styling; the selected sidebar row keeps the theme's own colours so the
+  label stays readable.
+
 ## 2.2.1 — bug-fix release
 
 - **Sidebar no longer disappears.** The window geometry saved on quit is now

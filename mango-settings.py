@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -2387,8 +2387,26 @@ def run_gui(args):
                              title=APP_NAME, default_width=width,
                              default_height=height)
             self.app = app
+            self.translucent = False
+            # --- translucent surface (MangoWM blurs what is behind it) -------
+            # A transparent toplevel plus semi-transparent CSS lets the
+            # compositor's blur (blur=1 in config.conf) show through.  On a
+            # screen without a compositor we stay fully opaque.
+            try:
+                screen = self.get_screen()
+                visual = screen.get_rgba_visual()
+                if visual is not None and screen.is_composited():
+                    self.set_visual(visual)
+                    self.get_style_context().add_class("app-window")
+                    self.set_app_paintable(True)
+                    self.translucent = True
+            except Exception:
+                pass
+            self.surface = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.surface.get_style_context().add_class("app-surface")
+            self.add(self.surface)
             self.paned = Gtk.Paned()
-            self.add(self.paned)
+            self.surface.add(self.paned)
             # Remember the window size for next launch (validated in
             # on_size_allocate / on_destroy).
             self._last_size = (width, height)
@@ -2402,6 +2420,7 @@ def run_gui(args):
             # -- sidebar -------------------------------------------------------
             side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             side.set_border_width(8)
+            side.get_style_context().add_class("app-sidebar")
 
             self.search = Gtk.SearchEntry(placeholder_text="Search settings… (Ctrl+F)")
             self.search.connect("search-changed", self.on_search)
@@ -2416,7 +2435,9 @@ def run_gui(args):
                 self.theme_combo.append_text(choice)
             self.theme_combo.set_active(0)
             self.theme_combo.connect("changed", app.on_theme_changed)
-            theme_box.add(theme_label); theme_box.add(self.theme_combo)
+            theme_box.pack_start(theme_label, False, False, 0)
+            theme_box.pack_start(self.theme_combo, True, True, 0)
+            theme_box.pack_start(self._make_blur_check(), False, False, 0)
             side.pack_start(theme_box, False, False, 2)
 
             self.sidebar = Gtk.ListBox()
@@ -2514,6 +2535,17 @@ def run_gui(args):
                 new_pos = self._sidebar_position(self.paned.get_child1())
                 if new_pos != pos:
                     self.paned.set_position(new_pos)
+
+        def _make_blur_check(self):
+            """Small "Blur" toggle next to the theme selector."""
+            check = Gtk.CheckButton(label="Blur")
+            check.set_tooltip_text(
+                "Translucent window \u2014 MangoWM blurs whatever is behind it "
+                "(needs blur=1 in config.conf)")
+            check.set_active(self.app.blur_enabled())
+            check.connect("toggled", self.app.on_blur_toggled)
+            self.blur_check = check
+            return check
 
         def on_row_selected(self, _box, row):
             if row is None:
@@ -2615,6 +2647,7 @@ def run_gui(args):
             self._install_accelerators()
             self.window.show_all()
             self.window.fit_sidebar()
+            self.apply_blur()
             self.apply_theme(self.read_theme_pref())
             self.window.theme_combo.handler_block_by_func(self.on_theme_changed)
             self.window.theme_combo.set_active(
@@ -2834,6 +2867,65 @@ def run_gui(args):
                           (gsettings_get(GTK_THEME_SCHEMA, "color-scheme") == "prefer-dark"))
             Gtk.Settings.get_default().set_property(
                 "gtk-application-prefer-dark-theme", bool(prefer_dark))
+            # Re-resolve the @theme_* colours in our stylesheet for the new theme.
+            self.apply_blur()
+
+        # -- translucent / blurred surface ------------------------------------
+        def blur_enabled(self):
+            return self.read_ui_pref("blur", "1") != "0"
+
+        def apply_blur(self):
+            """(Re)load the app stylesheet with or without translucency.
+
+            Colours are derived from the GTK theme via ``alpha(@theme_…, a)``
+            so light and dark themes both look right.  When blur is turned
+            off everything becomes opaque and the rounded corners go away
+            (otherwise the corners would show the unpainted window).
+            """
+            on = self.blur_enabled() and getattr(self.window, "translucent", False)
+            alpha = 0.80 if on else 1.0
+            radius = 14 if on else 0
+            css = """
+                window.app-window { background-color: transparent; }
+                .app-surface {
+                    background-color: alpha(@theme_bg_color, %(alpha)s);
+                    border-radius: %(radius)spx;
+                    border: 1px solid alpha(@theme_fg_color, 0.10);
+                }
+                .app-sidebar {
+                    background-color: alpha(@theme_fg_color, 0.05);
+                    border-radius: 10px;
+                    padding: 6px;
+                }
+                frame {
+                    background-color: alpha(@theme_base_color, 0.55);
+                    border: none;
+                    border-radius: 10px;
+                    padding: 10px;
+                }
+                list.sidebar { background-color: transparent; }
+                list.sidebar row { border-radius: 8px; }
+                list.sidebar row:selected label {
+                    color: @theme_selected_fg_color;
+                }
+                button { border-radius: 8px; }
+                entry, spinbutton, combobox button { border-radius: 8px; }
+            """ % {"alpha": alpha, "radius": radius}
+            provider = getattr(self, "_css_provider", None)
+            if provider is None:
+                provider = Gtk.CssProvider()
+                Gtk.StyleContext.add_provider_for_screen(
+                    Gdk.Screen.get_default(), provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                self._css_provider = provider
+            try:
+                provider.load_from_data(css.encode("utf-8"))
+            except Exception as exc:      # never let styling break the app
+                sys.stderr.write("mango-settings: stylesheet error: %s\n" % exc)
+
+        def on_blur_toggled(self, switch, _pspec=None):
+            self.write_ui_pref(blur="1" if switch.get_active() else "0")
+            self.apply_blur()
 
     app = MangoApp(args)
     return app.run()
