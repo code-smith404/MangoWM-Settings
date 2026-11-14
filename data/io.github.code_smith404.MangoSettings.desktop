@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Mango Settings
+GenericName=Settings Manager
+Comment=Configure the MangoWM Wayland compositor
+Exec=mango-settings
+Icon=io.github.code_smith404.MangoSettings
+Terminal=false
+Categories=Settings;DesktopSettings;GTK;
+Keywords=settings;mango;mangowm;wm;wayland;appearance;keybindings;monitors;
+StartupNotify=true
+StartupWMClass=mango-settings

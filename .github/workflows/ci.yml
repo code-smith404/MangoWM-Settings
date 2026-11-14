@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install pyflakes
+      - run: python -m pyflakes mango-settings.py tests
+      - run: python -m py_compile mango-settings.py
+      - run: python -m unittest discover -v tests
+      - run: python mango-settings.py --version
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh
+      - name: Install and uninstall into a temp prefix
+        run: |
+          ./install.sh --no-deps --prefix "$RUNNER_TEMP/pfx"
+          test -x "$RUNNER_TEMP/pfx/bin/mango-settings"
+          ./install.sh --prefix "$RUNNER_TEMP/pfx" --uninstall
+          test ! -e "$RUNNER_TEMP/pfx/bin/mango-settings"
