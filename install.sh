@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mango Settings installer — POSIX sh, works on Alpine, Void, Debian (dash),
 # Fedora, Arch, openSUSE and NixOS (via nix-shell launcher).
-#   curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
 set -u
 
 REPO_URL="https://github.com/code-smith404/MangoWM-Settings"
@@ -53,7 +53,7 @@ DEPS_YUM="python3-gobject gtk3"
 DEPS_APK="py3-gobject3 gtk+3.0"
 DEPS_XBPS="python3-gobject gtk+3"
 DEPS_ZYPPER="python3-gobject gtk3"
-DEPS_EOPKG="python3-gobject gir1.2-gtk-3.0? python3-gtk3"
+DEPS_EOPKG="python3-gobject python3-gtk3"
 DEPS_NIX=""
 
 print_deps_for() {
@@ -73,13 +73,6 @@ fi
 
 # --- distro detection ---------------------------------------------------------
 PM=""
-detect_os_release() {
-    [ -r /etc/os-release ] || return 1
-    . /etc/os-release 2>/dev/null
-    ID="${ID:-}"
-    ID_LIKE="${ID_LIKE:-}"
-}
-
 detect_pm() {
     for tool in pacman apt-get dnf yum xbps-install zypper apk emerge eopkg; do
         if command -v "$tool" >/dev/null 2>&1; then
@@ -141,7 +134,6 @@ mkdir -p "$BIN_DIR" "$SHARE_DIR" "$APP_DIR" "$ICON_DIR"
 echo "==> Downloading mango-settings.py (ref: $REF)"
 fetch "$RAW_BASE/$REF/mango-settings.py" "$SHARE_DIR/mango-settings.py" || {
     echo "Download failed — check your network connection or --ref value." >&2; exit 1; }
-fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.desktop" "$APP_DIR/$DESKTOP_ID.desktop" || true
 fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.svg" "$ICON_DIR/$DESKTOP_ID.svg" || true
 
 # sanity check: valid python?
@@ -162,17 +154,25 @@ exec python3 "$SHARE_DIR/mango-settings.py" "\$@"
 LAUNCHER
 chmod +x "$BIN_DIR/mango-settings"
 
-[ -f "$APP_DIR/$DESKTOP_ID.desktop" ] || cat > "$APP_DIR/$DESKTOP_ID.desktop" <<DESKTOP
+# Generate the desktop entry with absolute Exec/TryExec paths.  Launchers
+# like rofi silently drop entries whose TryExec is not found on *their*
+# PATH, and compositor sessions often do not include ~/.local/bin in PATH.
+cat > "$APP_DIR/$DESKTOP_ID.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Mango Settings
+GenericName=Settings Manager
 Comment=Settings manager for the MangoWM Wayland compositor
-Exec=mango-settings
+Exec=$BIN_DIR/mango-settings
+TryExec=$BIN_DIR/mango-settings
 Icon=$DESKTOP_ID
 Terminal=false
 Categories=Settings;DesktopSettings;
-Keywords=mango;wayland;settings;
+Keywords=mango;mangowm;wayland;settings;
+StartupNotify=false
 DESKTOP
+chmod 644 "$APP_DIR/$DESKTOP_ID.desktop"
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" 2>/dev/null || true
 
 if [ "$DO_DEPS" = 1 ] && ! python3 -c "import gi" 2>/dev/null; then
     if [ -t 0 ]; then
