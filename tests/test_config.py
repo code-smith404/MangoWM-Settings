@@ -533,6 +533,29 @@ class UnsetTests(TempHomeTestCase):
             self.assertEqual(fh.read(), "bordergap = 1\nborder_px = 5\n")
 
 
+class ResolvePageTests(unittest.TestCase):
+    """--page accepts keys, titles and dash/underscore spellings."""
+
+    def test_keys(self):
+        for key in ms.PAGE_ORDER:
+            self.assertEqual(ms.resolve_page(key), key)
+
+    def test_titles(self):
+        for key in ms.PAGE_ORDER:
+            self.assertEqual(ms.resolve_page(ms.PAGE_TITLES[key]), key)
+
+    def test_case_and_separators(self):
+        self.assertEqual(ms.resolve_page("CONFIG FILES"), "files")
+        self.assertEqual(ms.resolve_page("config-files"), "files")
+        self.assertEqual(ms.resolve_page("config_files"), "files")
+        self.assertEqual(ms.resolve_page("window behavior"), "behavior")
+
+    def test_unknown_and_empty(self):
+        self.assertIsNone(ms.resolve_page("nope"))
+        self.assertIsNone(ms.resolve_page(""))
+        self.assertIsNone(ms.resolve_page(None))
+
+
 class SearchTests(unittest.TestCase):
     """Ctrl+F matching across pages and individual settings."""
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.2.1 — bug-fix release
+
+- **Sidebar no longer disappears.** The window geometry saved on quit is now
+  taken from the last *allocated* size instead of `get_size()` at destroy
+  time, where GTK reports degenerate values (a saved `width = 1`,
+  `sidebar = 1` restored as a collapsed sidebar). Loaded values are clamped,
+  the paned position is kept at or above the sidebar's minimum width, and a
+  re-fit on `size-allocate` recovers if it is ever clamped to 0.
+- **Fixed pages that showed the previous page.** Several pages (Keybindings,
+  Workspaces, Window rules, Monitors, Startup apps) never called
+  `show_all()`, and `Gtk.Stack` refuses to switch to an invisible child — so
+  selecting them kept the old page on screen. Pages are now shown
+  explicitly when added to the stack.
+- **Fixed the Config files page**, which crashed on open with
+  `AttributeError: 'MangoApp' object has no attribute 'bind_doc'`. It now
+  lists every loaded file with its line count and error/warning badges, has
+  a "Re-check includes" button, and saves raw edits through the same
+  backup + atomic-write path as everything else.
+- **Fixed `--page` for multi-word titles.** `--page "Config files"`,
+  `--page "Window behavior"`, `--page "Input devices"` and friends resolved
+  to the title instead of the page key and silently did nothing; page
+  resolution is now a testable helper that accepts keys, titles and
+  dash/underscore spellings.
+- 4 new unit tests (71 total).
+
 ## 2.2.0 — category icons, settings search, reset buttons, UI fixes
 
 - **Icons for every category**: symbolic icon per page in the sidebar and in

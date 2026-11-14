@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -754,6 +754,26 @@ def option_matches(opt, needle):
     return needle in haystack
 
 
+def resolve_page(name):
+    """Map a ``--page`` argument to a page key, or None.
+
+    Accepts the internal key (``files``), the display title (``Config
+    files``) and dash/underscore spellings (``window-behavior``), all
+    case-insensitively.
+    """
+    if not name:
+        return None
+    raw = name.strip().lower()
+    if raw in PAGE_ORDER:
+        return raw
+    normalised = raw.replace("-", " ").replace("_", " ")
+    for key in PAGE_ORDER:
+        title = PAGE_TITLES[key].lower()
+        if normalised in (title, title.replace(" ", ""), key):
+            return key
+    return None
+
+
 # ---------------------------------------------------------------------------
 # MangoConfig — the full config graph (root file + includes)
 # ---------------------------------------------------------------------------
@@ -1301,6 +1321,48 @@ def gsettings_set(schema, key, value):
 
 
 GTK_THEME_SCHEMA = "org.gnome.desktop.interface"
+
+
+def write_text_atomic(path, text, backup=True, backup_root=None):
+    """Write ``text`` to ``path`` atomically, preserving permissions.
+
+    Symlinks are followed (the target is replaced, not the link), a copy of
+    the old contents is kept under the session backup directory, and the
+    new file only appears via ``os.replace`` so a crash cannot truncate a
+    config file.
+
+    Returns (ok, message).
+    """
+    real = os.path.realpath(os.path.expanduser(path))
+    try:
+        mode = os.stat(real).st_mode & 0o7777
+    except OSError:
+        mode = 0o644
+    if backup:
+        try:
+            root = os.path.expanduser(backup_root or BACKUP_ROOT)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            bdir = os.path.join(root, stamp)
+            os.makedirs(bdir, exist_ok=True)
+            with open(real, "rb") as fh:
+                old = fh.read()
+            with open(os.path.join(bdir, os.path.basename(real)), "wb") as fh:
+                fh.write(old)
+        except OSError:
+            pass                      # never block a save on backup trouble
+    tmp = real + ".mango-settings-tmp"
+    try:
+        with open(tmp, "w", errors="surrogateescape", newline="") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, real)
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False, "Could not write %s: %s" % (path, exc)
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -2002,63 +2064,91 @@ def run_gui(args):
         page_key = "files"
 
         def build(self):
-            self.listbox = Gtk.ListBox()
+            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
             frame = self.add_frame()
             frame.add(self.listbox)
+            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            refresh = Gtk.Button(label="Re-check includes")
+            refresh.set_tooltip_text("Re-read all files and report missing or cyclic includes")
+            refresh.connect("clicked", self.on_refresh)
+            btns.pack_start(refresh, False, False, 0)
+            self.content.pack_start(btns, False, False, 4)
+            self.rebuild()
+
+        def on_refresh(self, _btn):
+            self.app.reload_config()
             self.rebuild()
 
         def rebuild(self):
             for child in self.listbox.get_children():
                 self.listbox.remove(child)
-            errors, warnings = self.app.config.summary()
+            cfg = self.app.config
+            errors, warnings = cfg.summary()
             by_file = {}
             for issue in errors + warnings:
-                by_file.setdefault(issue.path, []).append(issue)
-            docs = [self.app.config.docs[r] for r in self.app.config.order]
-            extra = [d for d in (self.app.bind_doc, self.app.rule_doc, self.app.monitor_doc)
-                     if d is not None]
-            for doc in list(dict.fromkeys(docs + [e.path for e in errors])) :
-                if not hasattr(doc, "lines"):
-                    continue
-                problems = by_file.get(doc.path, [])
-                row = Gtk.ListBoxRow(activatable=True)
+                by_file.setdefault(os.path.realpath(os.path.expanduser(issue.path or "")),
+                                   []).append(issue)
+            docs = [cfg.docs[r] for r in cfg.order if r in cfg.docs]
+            for doc in docs:
+                problems = by_file.get(os.path.realpath(doc.path), [])
+                row = Gtk.ListBoxRow()
+                row.set_activatable(True)
                 row.connect("activate", self.on_open, doc)
                 box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                box.set_border_width(6)
+                icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic",
+                                                   Gtk.IconSize.BUTTON)
+                box.pack_start(icon, False, False, 0)
                 name = Gtk.Label(label=doc.path.replace(os.path.expanduser("~"), "~"),
-                                 xalign=0, hexpand=True)
-                box.pack_start(name, True, True, 8)
+                                 xalign=0, hexpand=True, ellipsize=3)
+                box.pack_start(name, True, True, 0)
+                link = Gtk.Label(label="%d line%s" % (len(doc.lines),
+                                                      "" if len(doc.lines) == 1 else "s"))
+                link.get_style_context().add_class("dim-label")
+                box.pack_start(link, False, False, 0)
                 if problems:
                     errs = [p for p in problems if p.severity == Issue.ERROR]
                     color = "red" if errs else "orange"
-                    text = "%d error%s" % (len(errs), "s" if len(errs) != 1 else "") if errs \
-                        else "%d warning%s" % (len(problems), "s" if len(problems) != 1 else "")
+                    if errs:
+                        text = "%d error%s" % (len(errs), "s" if len(errs) != 1 else "")
+                    else:
+                        text = "%d warning%s" % (len(problems),
+                                                  "s" if len(problems) != 1 else "")
                     warn = Gtk.Label()
                     warn.set_markup("<span foreground='%s'>%s</span>" % (color, text))
-                    box.pack_start(warn, False, False, 4)
-                box.pack_start(Gtk.Label(label="edit", ), False, False, 2)
+                    box.pack_start(warn, False, False, 0)
+                edit = Gtk.Image.new_from_icon_name("document-edit-symbolic",
+                                                    Gtk.IconSize.BUTTON)
+                box.pack_start(edit, False, False, 0)
                 row.add(box)
                 self.listbox.add(row)
             self.listbox.show_all()
-            if warnings or errors:
+            if not docs:
+                self.add_note("No config files loaded.")
+            elif warnings or errors:
                 self.add_note("%d error(s), %d warning(s) across all files. Click a file "
                               "to view and edit it raw." % (len(errors), len(warnings)))
+            else:
+                self.add_note("Includes are healthy \u2014 every sourced file was found.")
 
         def on_open(self, _row, doc):
-            path = doc.path if hasattr(doc, "path") else doc
+            path = os.path.realpath(os.path.expanduser(doc.path))
             try:
-                with open(os.path.realpath(os.path.expanduser(path)), "rb") as fh:
+                with open(path, "rb") as fh:
                     data = fh.read()
                 text = data.decode("utf-8", errors="surrogateescape")
                 lossless = text.encode("utf-8", "surrogateescape") == data
             except OSError as exc:
-                self.app.error_dialog("Cannot open %s: %s" % (path, exc.strerror))
+                self.app.error_dialog("Cannot open %s: %s" % (doc.path, exc.strerror))
                 return
-            dlg = Gtk.Dialog(title=os.path.basename(path),
+            dlg = Gtk.Dialog(title=os.path.basename(doc.path),
                              transient_for=self.get_toplevel(), modal=True)
             dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Save", Gtk.ResponseType.OK)
-            dlg.set_default_size(700, 500)
+            dlg.set_default_size(720, 520)
             scroll = Gtk.ScrolledWindow()
             view = Gtk.TextView()
+            view.set_monospace(True)
             buf = view.get_buffer()
             buf.set_text(text)
             if not lossless:
@@ -2071,9 +2161,12 @@ def run_gui(args):
             if dlg.run() == Gtk.ResponseType.OK and lossless:
                 new_text = buf.get_text(*buf.get_bounds(), include_hidden_chars=True)
                 if new_text != text:
-                    with open(os.path.realpath(os.path.expanduser(path)), "wb") as fh:
-                        fh.write(new_text.encode("utf-8", "surrogateescape"))
-                    self.app.reload_config()
+                    ok, msg = write_text_atomic(path, new_text)
+                    if not ok:
+                        self.app.error_dialog(msg)
+                    else:
+                        self.app.reload_config()
+                        self.rebuild()
             dlg.destroy()
 
     class ThemingPage(PageBase):
@@ -2287,13 +2380,20 @@ def run_gui(args):
                 height = int(app.read_ui_pref("height", 680))
             except (TypeError, ValueError):
                 width, height = 980, 680
+            # Clamp junk from older versions (a destroyed window reports 1x1).
+            width = width if 480 <= width <= 6000 else 980
+            height = height if 320 <= height <= 4000 else 680
             super().__init__(application=app.gtk_app,
                              title=APP_NAME, default_width=width,
                              default_height=height)
             self.app = app
             self.paned = Gtk.Paned()
             self.add(self.paned)
-            # Remember the window size for next launch.
+            # Remember the window size for next launch (validated in
+            # on_size_allocate / on_destroy).
+            self._last_size = (width, height)
+            self._last_pos = 0
+            self.connect("size-allocate", self.on_size_allocate)
             self.connect("destroy", self.on_destroy)
 
             # No title bar: all window controls live in the sidebar instead.
@@ -2368,6 +2468,13 @@ def run_gui(args):
             # Restore the last window geometry, then the first/last page.
             self.sidebar.select_row(self.sidebar.get_children()[0])
 
+        def _sidebar_min_width(self):
+            """Minimum width the sidebar needs so nothing is clipped."""
+            try:
+                return max(180, self.paned.get_child1().get_preferred_width()[0])
+            except Exception:
+                return 200
+
         def _sidebar_position(self, side):
             """Sidebar width that never clips its content.
 
@@ -2385,7 +2492,28 @@ def run_gui(args):
             except (TypeError, ValueError):
                 saved = 0
             width = saved if saved >= min_width else min_width + 24
-            return max(180, min(width, 420))
+            # Never below the sidebar minimum (that is what clipped it), and
+            # never wider than a sane GNOME-ish sidebar.
+            return max(min_width, min(width, max(420, min_width)))
+
+        def on_size_allocate(self, _widget, alloc):
+            """Keep the sidebar visible and track a sane window geometry.
+
+            GTK clamps a paned position to the current allocation, so a
+            window that first appears 1px wide (or a stray drag to the edge)
+            would permanently collapse the sidebar to 0.  Re-fit whenever the
+            position is below the sidebar minimum and there is room.
+            """
+            if alloc.width >= 480 and alloc.height >= 320:
+                self._last_size = (alloc.width, alloc.height)
+            min_w = self._sidebar_min_width()
+            pos = self.paned.get_position()
+            if pos >= min_w:
+                self._last_pos = pos
+            elif alloc.width > min_w * 2:
+                new_pos = self._sidebar_position(self.paned.get_child1())
+                if new_pos != pos:
+                    self.paned.set_position(new_pos)
 
         def on_row_selected(self, _box, row):
             if row is None:
@@ -2397,6 +2525,10 @@ def run_gui(args):
                 self.stack.remove(child)
             page = self.app.make_page(key)
             self.stack.add_named(page, key)
+            # Some pages do not call show_all() themselves; a stack refuses to
+            # switch to an invisible child, so show the page explicitly (this
+            # used to leave the previous page on screen).
+            page.show_all()
             self.stack.set_visible_child_name(key)
 
         def on_search(self, entry):
@@ -2442,11 +2574,18 @@ def run_gui(args):
                 pass
 
         def on_destroy(self, *_a):
-            """Persist the window geometry for the next launch."""
+            """Persist the window geometry for the next launch.
+
+            Values are taken from the last *allocated* geometry, never from
+            ``get_size()`` here: during destruction GTK reports 1x1-ish sizes
+            and a paned position of 1, which used to be saved and then
+            restored as a collapsed sidebar.
+            """
             try:
-                width, height = self.get_size()
-                self.app.write_ui_pref(width=width, height=height,
-                                       sidebar=self.paned.get_position())
+                width, height = getattr(self, "_last_size", (0, 0))
+                pos = getattr(self, "_last_pos", 0)
+                if width >= 480 and height >= 320:
+                    self.app.write_ui_pref(width=width, height=height, sidebar=pos)
             except Exception:
                 pass
 
@@ -2743,20 +2882,13 @@ def main(argv=None):
             print(PAGE_TITLES[key])
         return 0
     if args.page:
-        page = args.page.strip().lower()
-        if page not in PAGE_ORDER:
-            # Also accept the human-readable page titles, case-insensitively
-            # (e.g. "Appearance", "Window behavior", "window-behavior").
-            page = page.replace("-", " ").replace("_", " ")
-            for key in PAGE_ORDER:
-                if PAGE_TITLES[key].lower() == page or key == page:
-                    break
-            else:
-                sys.stderr.write("Unknown page %r. Valid pages:\n%s\n" %
-                                 (args.page, "\n".join("  " + t + " (key: %s)" % k
-                                  for k, t in ((k, PAGE_TITLES[k]) for k in PAGE_ORDER))))
-                return 2
-        args.page = page
+        resolved = resolve_page(args.page)
+        if resolved is None:
+            sys.stderr.write("Unknown page %r. Valid pages:\n%s\n" %
+                             (args.page, "\n".join("  %s (key: %s)" % (PAGE_TITLES[k], k)
+                                                    for k in PAGE_ORDER)))
+            return 2
+        args.page = resolved
     if args.check:
         return cmd_check(MangoConfig(root=args.config))
     return run_gui(args)
