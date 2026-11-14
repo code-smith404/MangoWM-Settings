@@ -30,8 +30,21 @@ MANGO_DIR = os.path.join(HOME, ".config", "mango")
 SYSTEM_CONFIGS = (
     "/etc/mango/config.conf",
     "/usr/local/etc/mango/config.conf",
+    "/usr/etc/mango/config.conf",                    # openSUSE vendor configs
+    "/run/current-system/sw/etc/mango/config.conf",  # NixOS
     "/usr/share/mango/config.conf",
+    "/usr/share/doc/mango/config.conf",
 )
+
+
+def system_default_config():
+    """Find MangoWM's sample config, wherever the distro package put it."""
+    candidates = list(SYSTEM_CONFIGS)
+    binary = shutil.which("mango")
+    if binary:  # <prefix>/bin/mango -> <prefix>/etc/mango (Nix store, /opt, custom prefixes)
+        prefix = os.path.dirname(os.path.dirname(os.path.realpath(binary)))
+        candidates.insert(0, os.path.join(prefix, "etc", "mango", "config.conf"))
+    return next((p for p in candidates if os.path.isfile(p)), None)
 SESSION_STAMP = time.strftime("%Y%m%d-%H%M%S")
 
 
@@ -501,22 +514,34 @@ def memory_usage():
 
 
 def os_name():
-    for line in read_first("/etc/os-release").splitlines():
+    text = read_first("/etc/os-release") or read_first("/usr/lib/os-release")
+    for line in text.splitlines():
         if line.startswith("PRETTY_NAME="):
             return strip_quotes(line.split("=", 1)[1].strip())
     return "Linux"
 
 
 def cpu_name():
-    for line in read_first("/proc/cpuinfo").splitlines():
-        if line.lower().startswith("model name"):
-            return line.split(":", 1)[1].strip()
-    return os.uname().machine
+    info = read_first("/proc/cpuinfo")
+    for field in ("model name", "hardware", "cpu model", "cpu"):  # x86, ARM, MIPS, POWER
+        for line in info.splitlines():
+            name, _, value = line.partition(":")
+            if name.strip().lower() == field and value.strip():
+                return value.strip()
+    model = read_first("/proc/device-tree/model").strip("\x00\n ")  # Raspberry Pi and other boards
+    return model or os.uname().machine
 
 
 def data_dirs():
     dirs = [os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")]
     dirs += (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+    # Places some distros keep themes that may be missing from XDG_DATA_DIRS
+    # when the app is started from a launcher: Nix profiles and Flatpak exports.
+    user = os.environ.get("USER") or os.path.basename(HOME)
+    dirs += [os.path.join(HOME, ".nix-profile", "share"), "/etc/profiles/per-user/%s/share" % user,
+             "/run/current-system/sw/share", "/usr/share",
+             os.path.join(HOME, ".local", "share", "flatpak", "exports", "share"),
+             "/var/lib/flatpak/exports/share"]
     out = []
     for d in dirs:
         if d and d not in out:
@@ -1999,7 +2024,7 @@ if HAVE_GTK:
                              ".conf format only, so config pages are read-only to keep your setup "
                              "safe. Theming, notifications and system info still work." % root)
             elif self.kind == "new":
-                system = next((p for p in SYSTEM_CONFIGS if os.path.isfile(p)), None)
+                system = system_default_config()
                 text = "No MangoWM config found yet. Your settings will be saved to %s." % root
                 buttons = []
                 if system:

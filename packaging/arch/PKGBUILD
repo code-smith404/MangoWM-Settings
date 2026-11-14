@@ -1,0 +1,34 @@
+# Maintainer: Harikesh Verma (code-smith404) <299116741+code-smith404@users.noreply.github.com>
+pkgname=mango-settings-git
+_pkgname=mango-settings
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="GNOME-style settings app for the MangoWM Wayland compositor"
+arch=('any')
+url="https://github.com/code-smith404/MangoWM-Settings"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk3')
+optdepends=('glib2: Theming page (gsettings)'
+            'libnotify: test notifications')
+makedepends=('git')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+https://github.com/code-smith404/MangoWM-Settings.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  printf "%s.r%s.%s" \
+    "$(sed -n 's/^__version__ = "\(.*\)"/\1/p' mango-settings.py)" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+check() {
+  cd "$_pkgname"
+  python -m unittest discover tests
+}
+
+package() {
+  cd "$_pkgname"
+  make install PREFIX=/usr DESTDIR="$pkgdir"
+}
