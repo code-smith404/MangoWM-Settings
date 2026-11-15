@@ -58,8 +58,9 @@ if [ -n "$debs" ]; then
     done
 
     if command -v apt-ftparchive >/dev/null 2>&1; then
-        # Do not pre-create Release: apt-ftparchive would hash the old file
-        # into the new one and list Release itself.
+        # Do not leave Release/InRelease in the tree: apt-ftparchive would
+        # hash the stale files and list Release itself.
+        rm -f "$dist/Release" "$dist/Release.gpg" "$dist/InRelease"
         (
             cd "$dist"
             apt-ftparchive \
@@ -70,7 +71,8 @@ if [ -n "$debs" ]; then
                 -o APT::FTPArchive::Release::Architectures="all amd64 arm64 armhf" \
                 -o APT::FTPArchive::Release::Components="main" \
                 -o APT::FTPArchive::Release::Description="Mango Settings APT repository" \
-                release . > Release
+                release . > Release.new
+            mv -f Release.new Release
         )
     else
         cat > "$dist/Release" <<EOF
