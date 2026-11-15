@@ -28,7 +28,7 @@ chown -R builder "$work"
 
 su builder -s /bin/sh -c "abuild-keygen -a -n >/dev/null"
 cp -f /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
-su builder -s /bin/sh -c "cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
+su builder -s /bin/sh -c "export REPODEST='$work/packages'; cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
 
 mkdir -p "$out"
 find "$work/packages" -name 'mango-settings-*.apk' -exec cp -f {} "$out/" \;
