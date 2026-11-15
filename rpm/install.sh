@@ -26,6 +26,7 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
+mkdir -p "$(dirname "$REPO_FILE")"
 cat > "$REPO_FILE" <<'EOF'
 [mango-settings]
 name=Mango Settings
