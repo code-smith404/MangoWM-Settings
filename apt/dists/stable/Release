@@ -1,0 +1,48 @@
+Architectures: all amd64 arm64 armhf
+Codename: stable
+Components: main
+Date: Sun, 15 Nov 2026 14:01:35 +0000
+Description: Mango Settings APT repository
+Label: Mango Settings
+Origin: MangoWM-Settings
+Suite: stable
+MD5Sum:
+ 78dd95d23e95114425d4d7759c5fc6c6              175 Release
+ 80181ef591d96b203aed14324056edcd             1352 main/binary-all/Packages
+ 3c6a675db6d6526cf29db850f1c915c1              851 main/binary-all/Packages.gz
+ 80181ef591d96b203aed14324056edcd             1352 main/binary-amd64/Packages
+ 3c6a675db6d6526cf29db850f1c915c1              851 main/binary-amd64/Packages.gz
+ 80181ef591d96b203aed14324056edcd             1352 main/binary-arm64/Packages
+ 3c6a675db6d6526cf29db850f1c915c1              851 main/binary-arm64/Packages.gz
+ 80181ef591d96b203aed14324056edcd             1352 main/binary-armhf/Packages
+ 3c6a675db6d6526cf29db850f1c915c1              851 main/binary-armhf/Packages.gz
+SHA1:
+ aff1e01eca20e5a60b8e9afd467cdcec1c45c9df              175 Release
+ 9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-all/Packages
+ ab75bcaa03145a75032cb0d8a016bd5fee4bdc69              851 main/binary-all/Packages.gz
+ 9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-amd64/Packages
+ ab75bcaa03145a75032cb0d8a016bd5fee4bdc69              851 main/binary-amd64/Packages.gz
+ 9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-arm64/Packages
+ ab75bcaa03145a75032cb0d8a016bd5fee4bdc69              851 main/binary-arm64/Packages.gz
+ 9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-armhf/Packages
+ ab75bcaa03145a75032cb0d8a016bd5fee4bdc69              851 main/binary-armhf/Packages.gz
+SHA256:
+ 672d3396fb504a4ad9cd33ca40fcedffd560fe7fd97f553d4ac09d76a7514172              175 Release
+ 906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-all/Packages
+ 17fa5d8ff917c424a76fed8c1735c605cce9fa18eea55f0b05d85a1d6c2a8852              851 main/binary-all/Packages.gz
+ 906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-amd64/Packages
+ 17fa5d8ff917c424a76fed8c1735c605cce9fa18eea55f0b05d85a1d6c2a8852              851 main/binary-amd64/Packages.gz
+ 906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-arm64/Packages
+ 17fa5d8ff917c424a76fed8c1735c605cce9fa18eea55f0b05d85a1d6c2a8852              851 main/binary-arm64/Packages.gz
+ 906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-armhf/Packages
+ 17fa5d8ff917c424a76fed8c1735c605cce9fa18eea55f0b05d85a1d6c2a8852              851 main/binary-armhf/Packages.gz
+SHA512:
+ 0981ea15aa3022cc500db73f810f7f10b8b7852cce4cef4b1893b005f4e6cdf23fd5d4b4eedea6d4ef8b596c47c68648cdd3d7951a18e9d3e71befca47867653              175 Release
+ 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-all/Packages
+ 759084bab9e64f7f030a788a59442590df1670a0ecb1b0e8faccd664fd72b2c19035152acf5b3ce87e313d3103cea884d1d65b048e48115f0ff43d9f65191c4c              851 main/binary-all/Packages.gz
+ 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-amd64/Packages
+ 759084bab9e64f7f030a788a59442590df1670a0ecb1b0e8faccd664fd72b2c19035152acf5b3ce87e313d3103cea884d1d65b048e48115f0ff43d9f65191c4c              851 main/binary-amd64/Packages.gz
+ 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-arm64/Packages
+ 759084bab9e64f7f030a788a59442590df1670a0ecb1b0e8faccd664fd72b2c19035152acf5b3ce87e313d3103cea884d1d65b048e48115f0ff43d9f65191c4c              851 main/binary-arm64/Packages.gz
+ 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-armhf/Packages
+ 759084bab9e64f7f030a788a59442590df1670a0ecb1b0e8faccd664fd72b2c19035152acf5b3ce87e313d3103cea884d1d65b048e48115f0ff43d9f65191c4c              851 main/binary-armhf/Packages.gz

@@ -1,0 +1,6 @@
+[mango-settings]
+name=Mango Settings
+baseurl=https://code-smith404.github.io/MangoWM-Settings/rpm/noarch
+enabled=1
+gpgcheck=0
+# unsigned repository: packages are not GPG-signed
