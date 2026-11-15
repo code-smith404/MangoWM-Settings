@@ -16,7 +16,7 @@ optdepends=(
 makedepends=('make')
 checkdepends=('python')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('REPLACE_ME')
+sha256sums=('4708bd1e9fa51a2d05cc354a0d3edfe1795e4af4c8f3c49b2fc96b9e7d97da6b')
 
 check() {
     cd "$srcdir/MangoWM-Settings-$pkgver"

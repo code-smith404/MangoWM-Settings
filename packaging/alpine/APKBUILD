@@ -31,6 +31,6 @@ package() {
 	make install DESTDIR="$pkgdir" PREFIX=/usr
 }
 
-sha512sums="REPLACE_ME"
+sha512sums="fde159d82d2bf4bf2fef61e9174cdc71d0cf5c4865d92d81688c5655582ec460c26b96044e726ceb16be0fb84402fbd6814444f62368a3d60c3ebcf44086171d"
 
 # Alpine policy: regenerate with `abuild checksum` after the release tag exists.
