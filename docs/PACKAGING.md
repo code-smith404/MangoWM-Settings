@@ -174,9 +174,27 @@ manifest, and open a pull request. Flathub requires the AppStream metainfo in
 
 ## Hosted APT and RPM repositories
 
-The release workflow builds `.deb` and `.rpm` files and publishes them to the
-`gh-pages` branch, so users get updates without waiting for a distribution
-archive:
+The release workflow builds `.deb`, `.rpm` and Arch packages and publishes
+them to the `gh-pages` branch, so users get updates without waiting for a
+distribution archive.
+
+One-command installers add the repository once and then call the normal
+package manager:
+
+```sh
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/arch/install.sh | sudo sh
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/install.sh | sudo sh
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/install.sh | sudo sh
+```
+
+Each accepts `--uninstall`:
+
+```sh
+curl -fsSL .../arch/install.sh | sudo sh -s -- --uninstall
+```
+
+After the first run, `sudo pacman -S mango-settings`, `sudo apt install
+mango-settings` and `sudo dnf install mango-settings` work as usual.
 
 ### APT repository
 
@@ -218,6 +236,11 @@ sudo pacman -Sy mango-settings
 The hosted repository and packages are unsigned (`SigLevel = Optional
 TrustAll`). Once AUR publishing is enabled with `AUR_SSH_PRIVATE_KEY`, AUR is
 the preferred install path for Arch users.
+
+A bare `sudo pacman -S mango-settings` that works on a stock Arch install
+requires the package to be accepted into Arch's official repositories. That is
+an Arch Trusted User decision, not something CI can publish; `packaging/arch/PKGBUILD`
+is ready for that submission.
 
 To enable signature checking, also install
 `https://code-smith404.github.io/MangoWM-Settings/rpm/RPM-GPG-KEY-mango-settings`

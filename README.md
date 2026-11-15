@@ -82,25 +82,33 @@ full build and submission instructions are in
 | Any Linux (Flatpak) | `packaging/flatpak/` manifest |
 | Anything | `make install PREFIX=~/.local` |
 
-Releases also build `.deb`, `.rpm`, `.apk`, Arch and Flatpak packages and
-publish an APT and RPM repository on GitHub Pages:
+### One-command install (hosted repositories)
+
+These add the hosted repository once and install the package with your normal
+package manager:
 
 ```sh
-# Debian / Ubuntu (the hosted repo is currently unsigned)
-echo "deb [trusted=yes] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/mango-settings.list
-sudo apt update && sudo apt install mango-settings
+# Arch / Manjaro
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/arch/install.sh | sudo sh
+
+# Debian / Ubuntu
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/install.sh | sudo sh
 
 # Fedora / RHEL
-sudo curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/mango-settings.repo \
-  -o /etc/yum.repos.d/mango-settings.repo
-sudo dnf install mango-settings
-
-# Arch / Manjaro (unsigned hosted repo)
-curl -fsSL https://code-smith404.github.io/MangoWM-Settings/arch/mango-settings.conf \
-  | sudo tee -a /etc/pacman.conf
-sudo pacman -Sy mango-settings
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/install.sh | sudo sh
 ```
+
+After that, the plain commands work:
+
+```sh
+sudo pacman -S mango-settings     # Arch
+sudo apt install mango-settings   # Debian/Ubuntu
+sudo dnf install mango-settings   # Fedora/RHEL
+```
+
+The package is named `mango-settings` (Arch package names are lowercase).
+Manual repository setup and signing details are in
+[docs/PACKAGING.md](docs/PACKAGING.md#hosted-apt-and-rpm-repositories).
 
 Dependencies are **python-gobject** and **gtk3** (names per distro:
 

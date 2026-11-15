@@ -14,12 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shell syntax
-        run: sh -n install.sh tests/*.sh packaging/scripts/*.sh
+        run: sh -n install.sh tests/*.sh packaging/scripts/*.sh packaging/hosted/*.sh
       - name: ShellCheck
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck >/dev/null
-          shellcheck -s sh install.sh tests/*.sh packaging/scripts/*.sh
+          shellcheck -s sh install.sh tests/*.sh packaging/scripts/*.sh packaging/hosted/*.sh
       - name: Versions in sync
         run: sh tests/check-versions.sh
       - name: Desktop entry and AppStream metadata

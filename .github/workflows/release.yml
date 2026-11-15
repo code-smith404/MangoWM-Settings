@@ -121,6 +121,12 @@ jobs:
           SigLevel = Optional TrustAll
           Server = https://code-smith404.github.io/MangoWM-Settings/arch/$arch
           EOF
+      - name: Publish one-command installers
+        run: |
+          cp packaging/hosted/install-arch.sh public/arch/install.sh
+          cp packaging/hosted/install-debian.sh public/apt/install.sh
+          cp packaging/hosted/install-fedora.sh public/rpm/install.sh
+          chmod +x public/arch/install.sh public/apt/install.sh public/rpm/install.sh
       - name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:

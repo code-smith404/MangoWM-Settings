@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck -s sh install.sh tests/distro-test.sh tests/check-versions.sh
-          packaging/scripts/*.sh
+          packaging/scripts/*.sh packaging/hosted/*.sh
       - name: Versions match
         run: sh tests/check-versions.sh
       - name: Validate desktop file and AppStream metainfo
