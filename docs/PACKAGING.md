@@ -14,7 +14,7 @@ GitHub Pages.
 
 | Family | Package manager | Files | Install (end user) | Status |
 |---|---|---|---|---|
-| Arch / Manjaro / EndeavourOS | pacman (AUR) | `packaging/arch/PKGBUILD` | `cd packaging/arch && makepkg -si` | AUR publish step runs when `AUR_SSH_PRIVATE_KEY` is configured |
+| Arch / Manjaro / EndeavourOS | pacman (AUR + hosted repo) | `packaging/arch/PKGBUILD` | hosted pacman repo, or `cd packaging/arch && makepkg -si` | Hosted repo published by CI; AUR publish runs when `AUR_SSH_PRIVATE_KEY` is configured |
 | Arch (development) | pacman (AUR) | `packaging/arch/PKGBUILD-git` | `git clone --depth=1 https://github.com/code-smith404/MangoWM-Settings` then use `PKGBUILD-git` | AUR publish step runs when `AUR_SSH_PRIVATE_KEY` is configured |
 | Debian 12+ / Ubuntu 22.04+ / Mint / Pop!_OS | apt | `debian/`, hosted repo | see [APT repository](#apt-repository) | Repo published by CI; official archive needs an ITP |
 | Fedora / RHEL / AlmaLinux / Rocky | dnf | `packaging/fedora/mango-settings.spec`, hosted repo | see [RPM repository](#rpm-repository) | Repo published by CI; official repos need a review |
@@ -204,6 +204,20 @@ sudo curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/mango-setti
   -o /etc/yum.repos.d/mango-settings.repo
 sudo dnf install mango-settings
 ```
+
+### pacman repository
+
+The release workflow also publishes the Arch package as a pacman repository:
+
+```sh
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/arch/mango-settings.conf \
+  | sudo tee -a /etc/pacman.conf
+sudo pacman -Sy mango-settings
+```
+
+The hosted repository and packages are unsigned (`SigLevel = Optional
+TrustAll`). Once AUR publishing is enabled with `AUR_SSH_PRIVATE_KEY`, AUR is
+the preferred install path for Arch users.
 
 To enable signature checking, also install
 `https://code-smith404.github.io/MangoWM-Settings/rpm/RPM-GPG-KEY-mango-settings`

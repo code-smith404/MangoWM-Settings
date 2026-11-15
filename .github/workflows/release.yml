@@ -111,6 +111,16 @@ jobs:
           gpg --list-secret-keys --keyid-format long
       - name: Build APT and RPM repositories
         run: packaging/scripts/build-repos.sh artifacts public
+      - name: Build pacman repository
+        run: |
+          mkdir -p public/arch/x86_64
+          cp -f artifacts/*.pkg.tar.zst public/arch/x86_64/
+          cp -f artifacts/mango-settings.db artifacts/mango-settings.files public/arch/x86_64/
+          cat > public/arch/mango-settings.conf <<'EOF'
+          [mango-settings]
+          SigLevel = Optional TrustAll
+          Server = https://code-smith404.github.io/MangoWM-Settings/arch/$arch
+          EOF
       - name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:

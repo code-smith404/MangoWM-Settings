@@ -135,11 +135,19 @@ jobs:
             mango-settings --list-pages | grep -q Appearance
             pacman -Ql mango-settings | grep -q /usr/bin/mango-settings
             pacman -Ql mango-settings | grep -q /usr/share/man/man1/mango-settings.1
+            cd /src/artifacts
+            repo-add mango-settings.db.tar.gz ./*.pkg.tar.zst
+            # pacman fetches <repo>.db; ship real files, not symlinks
+            cp --remove-destination "$(readlink -f mango-settings.db)" mango-settings.db
+            cp --remove-destination "$(readlink -f mango-settings.files)" mango-settings.files
           '
       - uses: actions/upload-artifact@v4
         with:
           name: arch-package
-          path: artifacts/*.pkg.tar.zst
+          path: |
+            artifacts/*.pkg.tar.zst
+            artifacts/mango-settings.db
+            artifacts/mango-settings.files
           if-no-files-found: error
 
   nix:

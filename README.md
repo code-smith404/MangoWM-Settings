@@ -70,7 +70,7 @@ full build and submission instructions are in
 
 | Distro / package manager | Install |
 |---|---|
-| Arch / Manjaro (AUR) | `cd packaging/arch && makepkg -si` (or `yay -S mango-settings` once the AUR package is published) |
+| Arch / Manjaro (pacman) | hosted repo below, or `cd packaging/arch && makepkg -si` |
 | Debian / Ubuntu (apt) | `packaging/scripts/build-deb.sh` or the hosted repo below |
 | Fedora / RHEL (dnf) | `packaging/scripts/build-rpm.sh` or the hosted repo below |
 | Alpine (apk) | `packaging/alpine/APKBUILD` |
@@ -95,6 +95,11 @@ sudo apt update && sudo apt install mango-settings
 sudo curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/mango-settings.repo \
   -o /etc/yum.repos.d/mango-settings.repo
 sudo dnf install mango-settings
+
+# Arch / Manjaro (unsigned hosted repo)
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/arch/mango-settings.conf \
+  | sudo tee -a /etc/pacman.conf
+sudo pacman -Sy mango-settings
 ```
 
 Dependencies are **python-gobject** and **gtk3** (names per distro:
