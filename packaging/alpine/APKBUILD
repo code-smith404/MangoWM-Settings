@@ -12,7 +12,7 @@ depends="python3 py3-gobject3 gtk+3.0"
 makedepends=""
 checkdepends=""
 install=""
-subpackages=""
+subpackages="$pkgname-doc"
 source="$pkgname-$pkgver.tar.gz::https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v$pkgver.tar.gz"
 builddir="$srcdir/MangoWM-Settings-$pkgver"
 
@@ -29,7 +29,6 @@ check() {
 package() {
 	cd "$builddir"
 	make install DESTDIR="$pkgdir" PREFIX=/usr
-	gzip -9n "$pkgdir"/usr/share/man/man1/*.1
 }
 
 sha512sums="REPLACE_ME"
