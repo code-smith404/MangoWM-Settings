@@ -57,17 +57,9 @@ if [ -n "$debs" ]; then
         cp -f "$component/binary-all/Packages.gz" "$component/binary-$arch/Packages.gz"
     done
 
-    cat > "$dist/Release" <<EOF
-Origin: MangoWM-Settings
-Label: Mango Settings
-Suite: stable
-Codename: stable
-Architectures: all amd64 arm64 armhf
-Components: main
-Description: Mango Settings APT repository
-EOF
-
     if command -v apt-ftparchive >/dev/null 2>&1; then
+        # Do not pre-create Release: apt-ftparchive would hash the old file
+        # into the new one and list Release itself.
         (
             cd "$dist"
             apt-ftparchive \
@@ -78,9 +70,18 @@ EOF
                 -o APT::FTPArchive::Release::Architectures="all amd64 arm64 armhf" \
                 -o APT::FTPArchive::Release::Components="main" \
                 -o APT::FTPArchive::Release::Description="Mango Settings APT repository" \
-                release . > Release.new
-            mv Release.new Release
+                release . > Release
         )
+    else
+        cat > "$dist/Release" <<EOF
+Origin: MangoWM-Settings
+Label: Mango Settings
+Suite: stable
+Codename: stable
+Architectures: all amd64 arm64 armhf
+Components: main
+Description: Mango Settings APT repository
+EOF
     fi
 
     if [ -n "${GPG_KEY_ID:-}" ]; then

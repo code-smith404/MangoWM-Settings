@@ -181,17 +181,21 @@ archive:
 ### APT repository
 
 ```sh
-sudo install -d /usr/share/keyrings
-curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/key.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/mango-settings.gpg
-echo "deb [signed-by=/usr/share/keyrings/mango-settings.gpg] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
+echo "deb [trusted=yes] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/mango-settings.list
 sudo apt update
 sudo apt install mango-settings
 ```
 
-If the repository is unsigned (no `GPG_PRIVATE_KEY` secret configured), use
-`[trusted=yes]` instead of `signed-by=...`.
+The hosted repository is unsigned until the `GPG_PRIVATE_KEY` secret is
+configured. Once it is signed, replace `[trusted=yes]` with
+`[signed-by=/usr/share/keyrings/mango-settings.gpg]` and install the key:
+
+```sh
+sudo install -d /usr/share/keyrings
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/key.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/mango-settings.gpg
+```
 
 ### RPM repository
 

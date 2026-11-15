@@ -86,10 +86,8 @@ Releases also build `.deb`, `.rpm`, `.apk`, Arch and Flatpak packages and
 publish an APT and RPM repository on GitHub Pages:
 
 ```sh
-# Debian / Ubuntu
-curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/key.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/mango-settings.gpg
-echo "deb [signed-by=/usr/share/keyrings/mango-settings.gpg] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
+# Debian / Ubuntu (the hosted repo is currently unsigned)
+echo "deb [trusted=yes] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/mango-settings.list
 sudo apt update && sudo apt install mango-settings
 
