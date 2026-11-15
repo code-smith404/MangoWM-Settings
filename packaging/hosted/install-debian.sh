@@ -28,6 +28,7 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
+mkdir -p "$(dirname "$LIST")"
 printf '%s\n' "$REPO_LINE" > "$LIST"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y mango-settings
