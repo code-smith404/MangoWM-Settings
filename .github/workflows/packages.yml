@@ -1,0 +1,151 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: sh -n install.sh tests/*.sh packaging/scripts/*.sh
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck >/dev/null
+          shellcheck -s sh install.sh tests/*.sh packaging/scripts/*.sh
+      - name: Versions in sync
+        run: sh tests/check-versions.sh
+      - name: Desktop entry and AppStream metadata
+        run: |
+          sudo apt-get install -y -qq desktop-file-utils appstream >/dev/null
+          desktop-file-validate data/io.github.code_smith404.MangoSettings.desktop
+          appstreamcli validate --no-net data/io.github.code_smith404.MangoSettings.metainfo.xml
+      - name: YAML packaging files parse
+        run: |
+          sudo apt-get install -y -qq python3-yaml >/dev/null
+          python3 - <<'PY'
+          import glob, yaml
+          for f in ["packaging/solus/package.yml",
+                    "packaging/flatpak/io.github.code_smith404.MangoSettings.yml"]:
+              with open(f) as fh:
+                  yaml.safe_load(fh)
+              print("ok", f)
+          PY
+      - name: RPM specs parse
+        run: |
+          sudo apt-get install -y -qq rpm >/dev/null
+          rpmspec -P packaging/fedora/mango-settings.spec >/dev/null
+          rpmspec -P packaging/opensuse/mango-settings.spec >/dev/null
+          echo "rpm specs ok"
+      - name: Python packaging helpers
+        run: |
+          python3 -m py_compile mango-settings.py
+          python3 -m unittest discover -s tests -v
+
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build .deb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq debhelper devscripts build-essential fakeroot >/dev/null
+          packaging/scripts/build-deb.sh "$PWD/artifacts"
+      - name: Install the .deb on Debian
+        run: |
+          docker run --rm -v "$PWD:/src" debian:stable sh -euc '
+            apt-get update -qq
+            apt-get install -y -qq /src/artifacts/mango-settings_*.deb
+            mango-settings --version
+            mango-settings --list-pages | grep -q Appearance
+            test -f /usr/share/man/man1/mango-settings.1.gz
+            test -f /usr/share/metainfo/io.github.code_smith404.MangoSettings.metainfo.xml
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts/*.deb
+          if-no-files-found: error
+
+  rpm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build .rpm
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v "$PWD:/src" fedora:latest sh -euc '
+            dnf install -y -q rpm-build make git gzip tar python3 python3-gobject gtk3
+            git config --global --add safe.directory "*"
+            sh /src/packaging/scripts/build-rpm.sh fedora /src/artifacts
+            rpm -ivh /src/artifacts/mango-settings-*.rpm
+            mango-settings --version
+            mango-settings --list-pages | grep -q Appearance
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: artifacts/*.rpm
+          if-no-files-found: error
+
+  alpine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build .apk
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v "$PWD:/src" alpine:latest sh -euc '
+            apk add --no-cache alpine-sdk python3 py3-gobject3 gtk+3.0 git tar gzip make
+            git config --global --add safe.directory "*"
+            sh /src/packaging/scripts/build-alpine.sh /src/artifacts
+            apk add --allow-untrusted /src/artifacts/mango-settings-*.apk
+            mango-settings --version
+            mango-settings --list-pages | grep -q Appearance
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-package
+          path: artifacts/*.apk
+          if-no-files-found: error
+
+  arch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install the Arch package
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v "$PWD:/src" archlinux:latest sh -euc '
+            pacman -Syu --noconfirm --needed base-devel git python python-gobject gtk3 >/dev/null
+            git config --global --add safe.directory "*"
+            useradd -m builder
+            cp -r /src /home/builder/repo && chown -R builder /home/builder/repo
+            su builder -c "cd ~/repo && packaging/scripts/build-arch.sh ~/out"
+            cp /home/builder/out/*.pkg.tar.zst /src/artifacts/
+            pacman -U --noconfirm /src/artifacts/*.pkg.tar.zst
+            mango-settings --version
+            mango-settings --list-pages | grep -q Appearance
+            pacman -Ql mango-settings | grep -q /usr/bin/mango-settings
+            pacman -Ql mango-settings | grep -q /usr/share/man/man1/mango-settings.1
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: artifacts/*.pkg.tar.zst
+          if-no-files-found: error
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs .#mango-settings
+      - run: nix run . -- --version

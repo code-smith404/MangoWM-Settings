@@ -63,11 +63,40 @@ The installer installs into `~/.local` by default. Options:
 
 ### Distro packages
 
-| Distro | Command |
+Native packaging lives in [`packaging/`](packaging) and [`debian/`](debian);
+full build and submission instructions are in
+[docs/PACKAGING.md](docs/PACKAGING.md).
+
+| Distro / package manager | Install |
 |---|---|
-| Arch / Manjaro | use `packaging/arch/PKGBUILD` (AUR-ready) |
+| Arch / Manjaro (AUR) | `yay -S mango-settings` or `yay -S mango-settings-git` |
+| Debian / Ubuntu (apt) | `packaging/scripts/build-deb.sh` or the hosted repo below |
+| Fedora / RHEL (dnf) | `packaging/scripts/build-rpm.sh` or the hosted repo below |
+| Alpine (apk) | `packaging/alpine/APKBUILD` |
+| Void (xbps) | `packaging/void/template` |
+| openSUSE (zypper) | `packaging/opensuse/mango-settings.spec` |
+| Gentoo (portage) | `packaging/gentoo/mango-settings-2.2.2.ebuild` |
+| Solus (eopkg) | `packaging/solus/package.yml` |
 | NixOS / flakes | `nix run github:code-smith404/MangoWM-Settings` |
+| Any Linux (Flatpak) | `packaging/flatpak/` manifest |
 | Anything | `make install PREFIX=~/.local` |
+
+Releases also build `.deb`, `.rpm`, `.apk`, Arch and Flatpak packages and
+publish an APT and RPM repository on GitHub Pages:
+
+```sh
+# Debian / Ubuntu
+curl -fsSL https://code-smith404.github.io/MangoWM-Settings/apt/key.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/mango-settings.gpg
+echo "deb [signed-by=/usr/share/keyrings/mango-settings.gpg] https://code-smith404.github.io/MangoWM-Settings/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/mango-settings.list
+sudo apt update && sudo apt install mango-settings
+
+# Fedora / RHEL
+sudo curl -fsSL https://code-smith404.github.io/MangoWM-Settings/rpm/mango-settings.repo \
+  -o /etc/yum.repos.d/mango-settings.repo
+sudo dnf install mango-settings
+```
 
 Dependencies are **python-gobject** and **gtk3** (names per distro:
 
@@ -92,6 +121,8 @@ mango-settings --version
 `--check` is safe to run in scripts and CI — it reports include problems
 (cycles, missing files, depth loops) and exits non-zero on errors.
 
+A manual page is installed as `man mango-settings`.
+
 ## Safety model
 
 - Every save first **backs up** the touched files to
@@ -109,8 +140,11 @@ mango-settings --version
 ```sh
 python3 -m unittest discover -s tests   # config engine tests, no display needed
 make test
-sh tests/check-versions.sh              # version sync across PKGBUILD/flake
+sh tests/check-versions.sh              # version sync across every package
+sh packaging/scripts/update-checksums.sh  # after tagging a release
 ```
+
+Packaging and release details: [docs/PACKAGING.md](docs/PACKAGING.md).
 
 The config engine lives in the top half of `mango-settings.py` and never
 imports GTK — the UI is generated from a declarative schema in the bottom

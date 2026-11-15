@@ -1,0 +1,36 @@
+# Alpine Linux APKBUILD
+# Build with: abuild -r   (from this directory)
+# Submit to:  https://gitlab.alpinelinux.org/alpine/aports
+pkgname=mango-settings
+pkgver=2.2.2
+pkgrel=0
+pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor"
+url="https://github.com/code-smith404/MangoWM-Settings"
+arch="noarch"
+license="MIT"
+depends="python3 py3-gobject3 gtk+3.0"
+makedepends=""
+checkdepends=""
+install=""
+subpackages=""
+source="$pkgname-$pkgver.tar.gz::https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v$pkgver.tar.gz"
+builddir="$srcdir/MangoWM-Settings-$pkgver"
+
+build() {
+	cd "$builddir"
+	python3 -m py_compile mango-settings.py
+}
+
+check() {
+	cd "$builddir"
+	python3 -m unittest discover -s tests -v
+}
+
+package() {
+	cd "$builddir"
+	make install DESTDIR="$pkgdir" PREFIX=/usr
+}
+
+sha512sums="REPLACE_ME"
+
+# Alpine policy: regenerate with `abuild checksum` after the release tag exists.

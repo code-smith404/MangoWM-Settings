@@ -1,0 +1,7 @@
+mango-settings (2.2.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Blurred, translucent window with a Blur toggle.
+  * Install manual page and AppStream metainfo.
+
+ -- Harikesh Verma <code-smith404@users.noreply.github.com>  Fri, 14 Nov 2025 16:30:00 +0000

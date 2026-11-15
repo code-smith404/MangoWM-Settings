@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.code_smith404.MangoSettings</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Mango Settings</name>
+  <summary>Settings manager for the MangoWM Wayland compositor</summary>
+  <description>
+    <p>
+      Mango Settings is a GNOME Settings-style graphical configuration tool for
+      the MangoWM Wayland compositor. It edits MangoWM's configuration files
+      directly, preserving comments, ordering, symlinks and permissions.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Pages for appearance, animations, layouts, keybindings, workspaces, window rules, monitors, input devices, startup apps, theming and wallpapers</li>
+      <li>Search across all settings and a keybinding editor with conflict detection</li>
+      <li>Reset any setting to MangoWM's default</li>
+      <li>Atomic writes with timestamped backups and external-change detection</li>
+      <li>Headless configuration validation with <code>--check</code></li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.code_smith404.MangoSettings.desktop</launchable>
+  <url type="homepage">https://github.com/code-smith404/MangoWM-Settings</url>
+  <url type="bugtracker">https://github.com/code-smith404/MangoWM-Settings/issues</url>
+  <url type="vcs-browser">https://github.com/code-smith404/MangoWM-Settings</url>
+  <developer id="io.github.code_smith404">
+    <name>Harikesh Verma</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.2.2" date="2025-11-14">
+      <description>
+        <p>Blurred, translucent window with a Blur toggle, and theme-aware translucent cards and sidebar.</p>
+      </description>
+    </release>
+    <release version="2.2.1" date="2025-11-14">
+      <description>
+        <p>Bug-fix release: sidebar geometry, page switching, Config files page and multi-word --page titles.</p>
+      </description>
+    </release>
+  </releases>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Appearance settings</caption>
+      <image type="source">https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/docs/screenshots/appearance.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Keybindings editor</caption>
+      <image type="source">https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/docs/screenshots/keybindings.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Settings</category>
+    <category>DesktopSettings</category>
+  </categories>
+  <keywords>
+    <keyword>mango</keyword>
+    <keyword>mangowm</keyword>
+    <keyword>wayland</keyword>
+    <keyword>settings</keyword>
+    <keyword>compositor</keyword>
+  </keywords>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+</component>

@@ -1,0 +1,31 @@
+Source: mango-settings
+Section: admin
+Priority: optional
+Maintainer: Harikesh Verma <code-smith404@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/code-smith404/MangoWM-Settings
+Vcs-Git: https://github.com/code-smith404/MangoWM-Settings.git
+Vcs-Browser: https://github.com/code-smith404/MangoWM-Settings
+
+Package: mango-settings
+Architecture: all
+Depends: ${misc:Depends},
+         python3,
+         python3-gi,
+         python3-gi-cairo,
+         gir1.2-gtk-3.0
+Recommends: xdg-utils,
+            desktop-file-utils
+Suggests: swaybg | swww | feh
+Description: settings manager for the MangoWM Wayland compositor
+ Mango Settings is a GTK 3 configuration tool for the MangoWM Wayland
+ compositor. It edits MangoWM's configuration files in place while
+ preserving comments, ordering, symlinks and file permissions, and
+ writes changes atomically after creating timestamped backups.
+ .
+ It provides pages for appearance, animations, layouts, keybindings,
+ workspaces, window rules, monitors, input devices, startup apps,
+ theming and wallpapers, plus a keybinding editor with conflict
+ detection and headless configuration validation with --check.

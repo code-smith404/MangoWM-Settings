@@ -1,0 +1,79 @@
+.TH MANGO-SETTINGS 1 "2025" "mango-settings 2.2.2" "User Commands"
+.SH NAME
+mango-settings \- graphical settings manager for the MangoWM Wayland compositor
+.SH SYNOPSIS
+.B mango-settings
+[\fB\-\-page\fR \fIPAGE\fR]
+[\fB\-\-config\fR \fIFILE\fR]
+[\fB\-\-check\fR]
+[\fB\-\-list-pages\fR]
+[\fB\-\-version\fR]
+.SH DESCRIPTION
+.B mango-settings
+is a GTK 3 application that edits MangoWM's configuration files
+(\fI~/.config/mango/config.conf\fR and the files it includes) while
+preserving comments, ordering, symlinks and permissions.
+.PP
+Changes are written atomically after the original files have been backed
+up to \fI~/.cache/mango-settings/backups/\fR.
+.SH OPTIONS
+.TP
+.BR \-\-page " " \fIPAGE\fR
+Open the given page. Accepts the page key, its title, or a
+dash/underscore spelling (for example
+\fBwindow\-behavior\fR or \fB"Window behavior"\fR).
+.TP
+.BR \-\-config " " \fIFILE\fR
+Edit \fIFILE\fR instead of the default \fI~/.config/mango/config.conf\fR.
+.TP
+.B \-\-check
+Validate the loaded configuration and exit. Prints include problems
+(cycles, missing files, depth loops) and exits with status 1 on errors.
+No GUI or display is required.
+.TP
+.B \-\-list\-pages
+List every page name and exit.
+.TP
+.BR \-\-help ", " \-h
+Show a usage summary and exit.
+.TP
+.BR \-\-version
+Print the version and exit.
+.SH ENVIRONMENT
+.TP
+.B HOME
+Used to locate the MangoWM configuration, the application's own settings
+(\fI~/.config/mango-settings/settings.ini\fR) and the backup directory.
+.TP
+.B WAYLAND_DISPLAY ", " DISPLAY
+The GUI needs a running Wayland or X session. Use \fB\-\-check\fR,
+\fB\-\-list\-pages\fR and \fB\-\-version\fR headlessly.
+.SH FILES
+.TP
+.I ~/.config/mango/config.conf
+MangoWM's main configuration file.
+.TP
+.I ~/.config/mango-settings/settings.ini
+Mango Settings' own preferences (theme, window geometry, blur).
+.TP
+.I ~/.cache/mango-settings/backups/
+Timestamped backups written before every save.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Validation errors with \fB\-\-check\fR, or a runtime failure.
+.TP
+.B 2
+Invalid command-line usage.
+.SH SEE ALSO
+.BR mango (1),
+.BR mmsg (1)
+.PP
+Project homepage: https://github.com/code-smith404/MangoWM-Settings
+.SH AUTHOR
+Harikesh Verma <code-smith404@users.noreply.github.com>
+.SH LICENSE
+MIT

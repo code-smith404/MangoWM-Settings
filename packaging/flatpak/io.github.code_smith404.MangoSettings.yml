@@ -1,0 +1,47 @@
+# Flatpak manifest for io.github.code_smith404.MangoSettings
+#
+# Build locally:
+#   flatpak install flathub org.gnome.Platform//48 org.gnome.Sdk//48
+#   flatpak-builder --user --install --force-clean build-dir \
+#       packaging/flatpak/io.github.code_smith404.MangoSettings.yml
+#   flatpak run io.github.code_smith404.MangoSettings
+#
+# Flathub submission: fork https://github.com/flathub/flathub, add this file
+# and open a pull request from the `new-pr` branch.
+id: io.github.code_smith404.MangoSettings
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: mango-settings
+
+finish-args:
+  # Wayland, with an X11 fallback for XWayland-only sessions
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # MangoWM reads/writes ~/.config/mango; the app also keeps its own settings
+  # and backups in ~/.config/mango-settings and ~/.cache/mango-settings
+  - --filesystem=xdg-config/mango
+  - --filesystem=xdg-config/mango-settings
+  - --filesystem=xdg-cache/mango-settings
+  # Wallpaper page
+  - --filesystem=xdg-pictures
+  # Portal access for the file chooser / background portal
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --talk-name=org.freedesktop.portal.Background
+  - --talk-name=org.gtk.vfs.*
+
+modules:
+  - name: mango-settings
+    buildsystem: simple
+    build-commands:
+      - make install DESTDIR=/app PREFIX=/app
+      # Inside the sandbox /app/bin is on PATH; keep the exported desktop
+      # entry command name portable instead of the build-time absolute path.
+      - sed -i -e 's|^Exec=.*|Exec=mango-settings|' -e 's|^TryExec=.*|TryExec=mango-settings|'
+          /app/share/applications/io.github.code_smith404.MangoSettings.desktop
+    sources:
+      - type: archive
+        url: https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v2.2.2.tar.gz
+        sha256: REPLACE_ME

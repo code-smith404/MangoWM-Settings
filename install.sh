@@ -4,7 +4,6 @@
 #   curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
 set -u
 
-REPO_URL="https://github.com/code-smith404/MangoWM-Settings"
 RAW_BASE="https://raw.githubusercontent.com/code-smith404/MangoWM-Settings"
 REF="main"
 PREFIX="${HOME}/.local"
@@ -42,6 +41,8 @@ BIN_DIR="$PREFIX/bin"
 SHARE_DIR="$PREFIX/share/mango-settings"
 APP_DIR="$PREFIX/share/applications"
 ICON_DIR="$PREFIX/share/icons/hicolor/scalable/apps"
+MAN_DIR="$PREFIX/share/man/man1"
+METAINFO_DIR="$PREFIX/share/metainfo"
 DESKTOP_ID="io.github.code_smith404.MangoSettings"
 
 # --- dependency database -----------------------------------------------------
@@ -49,12 +50,9 @@ DESKTOP_ID="io.github.code_smith404.MangoSettings"
 DEPS_PACMAN="python-gobject gtk3"
 DEPS_APT="python3-gi python3-gi-cairo gir1.2-gtk-3.0"
 DEPS_DNF="python3-gobject gtk3"
-DEPS_YUM="python3-gobject gtk3"
 DEPS_APK="py3-gobject3 gtk+3.0"
 DEPS_XBPS="python3-gobject gtk+3"
 DEPS_ZYPPER="python3-gobject gtk3"
-DEPS_EOPKG="python3-gobject python3-gtk3"
-DEPS_NIX=""
 
 print_deps_for() {
     printf 'Arch/Manjaro : pacman -S %s\n' "$DEPS_PACMAN"
@@ -91,6 +89,8 @@ install_deps() {
             if command -v "$su" >/dev/null 2>&1; then SUDO="$su"; break; fi
         done
     fi
+    # The dependency lists are intentionally word-split into separate args.
+    # shellcheck disable=SC2086
     case "$PM" in
         pacman)       $SUDO pacman -S --needed --noconfirm $DEPS_PACMAN ;;
         apt-get)      $SUDO apt-get update && $SUDO apt-get install -y $DEPS_APT ;;
@@ -122,19 +122,23 @@ if [ "$UNINSTALL" = 1 ]; then
     echo "==> Removing Mango Settings from $PREFIX"
     rm -f "$BIN_DIR/mango-settings" "$APP_DIR/$DESKTOP_ID.desktop"
     rm -f "$ICON_DIR/$DESKTOP_ID.svg"
+    rm -f "$MAN_DIR/mango-settings.1"
+    rm -f "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml"
     rm -rf "$SHARE_DIR"
-    for d in "$HOME/.config/mango-settings"; do [ -d "$d" ] && rm -rf "$d"; done
+    rm -rf "$HOME/.config/mango-settings"
     echo "Done. Your MangoWM config in ~/.config/mango was kept."
     exit 0
 fi
 
 # --- install ----------------------------------------------------------------------
-mkdir -p "$BIN_DIR" "$SHARE_DIR" "$APP_DIR" "$ICON_DIR"
+mkdir -p "$BIN_DIR" "$SHARE_DIR" "$APP_DIR" "$ICON_DIR" "$MAN_DIR" "$METAINFO_DIR"
 
 echo "==> Downloading mango-settings.py (ref: $REF)"
 fetch "$RAW_BASE/$REF/mango-settings.py" "$SHARE_DIR/mango-settings.py" || {
     echo "Download failed — check your network connection or --ref value." >&2; exit 1; }
 fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.svg" "$ICON_DIR/$DESKTOP_ID.svg" || true
+fetch "$RAW_BASE/$REF/data/mango-settings.1" "$MAN_DIR/mango-settings.1" || true
+fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.metainfo.xml" "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml" || true
 
 # sanity check: valid python?
 if command -v python3 >/dev/null 2>&1; then
@@ -172,7 +176,9 @@ Keywords=mango;mangowm;wayland;settings;
 StartupNotify=false
 DESKTOP
 chmod 644 "$APP_DIR/$DESKTOP_ID.desktop"
-command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" 2>/dev/null || true
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$APP_DIR" 2>/dev/null || true
+fi
 
 if [ "$DO_DEPS" = 1 ] && ! python3 -c "import gi" 2>/dev/null; then
     if [ -t 0 ]; then
@@ -188,4 +194,5 @@ echo "==> Installed:"
 echo "    $BIN_DIR/mango-settings"
 echo "    $SHARE_DIR/mango-settings.py"
 echo "    $APP_DIR/$DESKTOP_ID.desktop"
+echo "    $MAN_DIR/mango-settings.1"
 echo "Run: mango-settings    (start 'mango-settings --check' to validate your config)"

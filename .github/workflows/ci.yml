@@ -33,12 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck -s sh install.sh tests/distro-test.sh tests/check-versions.sh
+          packaging/scripts/*.sh
       - name: Versions match
         run: sh tests/check-versions.sh
-      - name: Validate desktop file
+      - name: Validate desktop file and AppStream metainfo
         run: |
-          sudo apt-get install -y -qq desktop-file-utils >/dev/null
+          sudo apt-get install -y -qq desktop-file-utils appstream >/dev/null
           desktop-file-validate data/io.github.code_smith404.MangoSettings.desktop
+          appstreamcli validate --no-net data/io.github.code_smith404.MangoSettings.metainfo.xml
       - name: Oldest supported Python (3.8)
         run: docker run --rm -v "$PWD:/src" -w /src python:3.8-slim sh -c "python -m unittest discover tests && python mango-settings.py --version"
       - name: Install and uninstall into a temp prefix (dash)
@@ -102,14 +104,12 @@ jobs:
             su builder -c "
               set -e
               git config --global --add safe.directory \"*\"
-              cd ~/repo && git checkout -qB main
-              cd packaging/arch
-              sed -i \"s|git+https://github.com/code-smith404/MangoWM-Settings.git|git+file:///home/builder/repo#branch=main|\" PKGBUILD
-              makepkg --noconfirm
+              cd ~/repo && packaging/scripts/build-arch.sh ~/out
             "
-            pacman -U --noconfirm /home/builder/repo/packaging/arch/*.pkg.tar.zst
+            pacman -U --noconfirm /home/builder/out/*.pkg.tar.zst
             mango-settings --version
-            pacman -Ql mango-settings-git
+            pacman -Ql mango-settings | grep -q /usr/bin/mango-settings
+            pacman -Ql mango-settings | grep -q /usr/share/man/man1/mango-settings.1
           '
 
   nix:

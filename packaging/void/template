@@ -1,0 +1,16 @@
+# Template file for 'mango-settings'
+pkgname=mango-settings
+version=2.2.2
+revision=1
+build_wrksrc="MangoWM-Settings-${version}"
+build_style=gnu-makefile
+make_install_args="PREFIX=/usr"
+hostmakedepends="python3"
+depends="python3 python3-gobject gtk+3"
+short_desc="GTK3 settings manager for the MangoWM Wayland compositor"
+maintainer="Harikesh Verma <code-smith404@users.noreply.github.com>"
+license="MIT"
+homepage="https://github.com/code-smith404/MangoWM-Settings"
+changelog="https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/CHANGELOG.md"
+distfiles="${homepage}/archive/refs/tags/v${version}.tar.gz"
+checksum=REPLACE_ME

@@ -28,12 +28,20 @@
             dontWrapPythonPrograms = false;
             installPhase = ''
               runHook preInstall
-              install -d $out/bin $out/share/mango-settings
+              install -d $out/bin $out/share/mango-settings \
+                $out/share/applications \
+                $out/share/icons/hicolor/scalable/apps \
+                $out/share/man/man1 $out/share/metainfo \
+                $out/share/licenses/mango-settings
               install -m 755 mango-settings.py $out/share/mango-settings/
               install -m 644 data/io.github.code_smith404.MangoSettings.desktop \
-                $out/share/applications/ 2>/dev/null || true
+                $out/share/applications/
               install -m 644 data/io.github.code_smith404.MangoSettings.svg \
-                $out/share/icons/hicolor/scalable/apps/ 2>/dev/null || true
+                $out/share/icons/hicolor/scalable/apps/
+              install -m 644 data/mango-settings.1 $out/share/man/man1/
+              install -m 644 data/io.github.code_smith404.MangoSettings.metainfo.xml \
+                $out/share/metainfo/
+              install -m 644 LICENSE $out/share/licenses/mango-settings/
               makeWrapper $out/share/mango-settings/mango-settings.py $out/bin/mango-settings
               runHook postInstall
             '';
@@ -42,6 +50,7 @@
               homepage = "https://github.com/code-smith404/MangoWM-Settings";
               license = licenses.mit;
               platforms = platforms.linux;
+              mainProgram = "mango-settings";
             };
           };
           default = mango-settings;

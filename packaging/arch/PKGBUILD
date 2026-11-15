@@ -6,26 +6,28 @@ pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor"
 arch=('any')
 url="https://github.com/code-smith404/MangoWM-Settings"
 license=('MIT')
-depends=('python-gobject' 'gtk3' 'python')
-optdepends=('mmsg: reload MangoWM and detect monitors from within the app')
+depends=('python' 'python-gobject' 'gtk3')
+optdepends=(
+    'mmsg: reload MangoWM and detect connected monitors from within the app'
+    'swaybg: set the wallpaper from the Background page'
+    'swww: set animated wallpapers from the Background page'
+    'feh: set the wallpaper on X11 sessions'
+)
+makedepends=('make')
+checkdepends=('python')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('REPLACE_ME')
+
+check() {
+    cd "$srcdir/MangoWM-Settings-$pkgver"
+    python -m py_compile mango-settings.py
+    python -m unittest discover -s tests -v
+    python mango-settings.py --list-pages >/dev/null
+}
 
 package() {
     cd "$srcdir/MangoWM-Settings-$pkgver"
-    local prefix="$pkgdir/usr"
-    install -d "$prefix/bin" "$prefix/share/mango-settings" \
-        "$prefix/share/applications" \
-        "$prefix/share/icons/hicolor/scalable/apps" \
-        "$prefix/share/licenses/$pkgname"
-    install -m 755 mango-settings.py "$prefix/share/mango-settings/"
-    printf '#!/bin/sh\nexec python3 "%s/share/mango-settings/mango-settings.py" "$@"\n' \
-        "$prefix" > "$pkgdir/usr/bin/mango-settings"
-    sed -i "s|$prefix||g" "$pkgdir/usr/bin/mango-settings"
-    chmod +x "$pkgdir/usr/bin/mango-settings"
-    install -m 644 data/io.github.code_smith404.MangoSettings.desktop \
-        "$prefix/share/applications/"
-    install -m 644 data/io.github.code_smith404.MangoSettings.svg \
-        "$prefix/share/icons/hicolor/scalable/apps/"
-    install -m 644 LICENSE "$prefix/share/licenses/$pkgname/"
+    make install DESTDIR="$pkgdir" PREFIX=/usr
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$pkgname/"
 }

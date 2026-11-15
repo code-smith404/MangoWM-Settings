@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+# Build with dpkg-buildpackage -us -uc -b
+
+%:
+	dh $@
+
+override_dh_auto_test:
+	python3 -m unittest discover -s tests -v
+
+override_dh_auto_install:
+	$(MAKE) install \
+		DESTDIR=$(CURDIR)/debian/mango-settings \
+		PREFIX=/usr
+
+override_dh_auto_clean:
+	$(MAKE) clean
