@@ -29,6 +29,7 @@ check() {
 package() {
 	cd "$builddir"
 	make install DESTDIR="$pkgdir" PREFIX=/usr
+	gzip -9n "$pkgdir"/usr/share/man/man1/*.1
 }
 
 sha512sums="REPLACE_ME"

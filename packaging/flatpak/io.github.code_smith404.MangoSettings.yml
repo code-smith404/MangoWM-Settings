@@ -36,11 +36,12 @@ modules:
   - name: mango-settings
     buildsystem: simple
     build-commands:
-      - make install DESTDIR=/app PREFIX=/app
+      - make install PREFIX=/app
       # Inside the sandbox /app/bin is on PATH; keep the exported desktop
       # entry command name portable instead of the build-time absolute path.
       - sed -i -e 's|^Exec=.*|Exec=mango-settings|' -e 's|^TryExec=.*|TryExec=mango-settings|'
           /app/share/applications/io.github.code_smith404.MangoSettings.desktop
+      - rm -f /app/share/applications/*.cache
     sources:
       - type: archive
         url: https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v2.2.2.tar.gz

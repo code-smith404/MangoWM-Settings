@@ -167,9 +167,10 @@ fi
 
 chmod +x "$SHARE_DIR/mango-settings.py"
 
-cat > "$BIN_DIR/mango-settings" <<LAUNCHER
+cat > "$BIN_DIR/mango-settings" <<'LAUNCHER'
 #!/bin/sh
-exec python3 "$SHARE_DIR/mango-settings.py" "\$@"
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec python3 "$bindir/../share/mango-settings/mango-settings.py" "$@"
 LAUNCHER
 chmod +x "$BIN_DIR/mango-settings"
 

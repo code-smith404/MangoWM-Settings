@@ -1517,8 +1517,6 @@ def run_gui(args):
             "  (%s)\n" % exc)
         return 1
 
-    from gi.repository import Gtk, Gdk, Gio, GLib
-
     # Icon themes differ: Adwaita ships symbolic icons, Papirus mostly plain
     # ones.  Resolve once per page, preferring the symbolic variant (it follows
     # the app theme colour), then the plain name, then a neutral fallback.
@@ -2753,7 +2751,6 @@ def run_gui(args):
 
         # -- actions ------------------------------------------------------------
         def action_save(self, *_a):
-            errors_before = len([i for i in self.config.issues if i.severity == Issue.ERROR])
             try:
                 saved = self.config.save()
                 for rf in self._rule_files.values():

@@ -85,7 +85,7 @@ jobs:
             dnf install -y -q rpm-build make git gzip tar python3 python3-gobject gtk3
             git config --global --add safe.directory "*"
             sh /src/packaging/scripts/build-rpm.sh fedora /src/artifacts
-            rpm -ivh /src/artifacts/mango-settings-*.rpm
+            dnf install -y --nogpgcheck /src/artifacts/mango-settings-*.rpm
             mango-settings --version
             mango-settings --list-pages | grep -q Appearance
           '

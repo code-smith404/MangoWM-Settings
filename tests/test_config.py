@@ -6,7 +6,6 @@ import importlib.util
 import os
 import shutil
 import stat
-import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -179,7 +178,6 @@ class IncludeTests(TempHomeTestCase):
         self.assertTrue(any("cycle" in str(e).lower() for e in errors))
 
     def test_depth_limit_reported(self):
-        chain = "config.conf"
         self.write("config.conf", "source = d1.conf\n")
         for i in range(ms.MAX_INCLUDE_DEPTH + 2):
             self.write("d%d.conf" % i, "source = d%d.conf\n" % (i + 1))

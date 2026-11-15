@@ -24,7 +24,7 @@ install_deps_for() {
     # best effort: container images sometimes need updates first
     case "${PKG_PM:-$(detect_pm)}" in
         pacman)       pacman -Syu --noconfirm --needed python-gobject gtk3 ;;
-        apt)          apt-get update -qq && apt-get install -y -qq python3-gi gir1.2-gtk-3.0 >/dev/null ;;
+        apt|apt-get)  apt-get update -qq && apt-get install -y -qq python3-gi gir1.2-gtk-3.0 >/dev/null ;;
         dnf)          dnf install -y python3-gobject gtk3 >/dev/null ;;
         apk)          apk add --no-cache py3-gobject3 gtk+3.0 >/dev/null ;;
         zypper)       zypper --non-interactive --gpg-auto-import-keys refresh >/dev/null &&
