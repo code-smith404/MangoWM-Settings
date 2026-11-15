@@ -13,4 +13,4 @@ license="MIT"
 homepage="https://github.com/code-smith404/MangoWM-Settings"
 changelog="https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/CHANGELOG.md"
 distfiles="${homepage}/archive/refs/tags/v${version}.tar.gz"
-checksum=4708bd1e9fa51a2d05cc354a0d3edfe1795e4af4c8f3c49b2fc96b9e7d97da6b
+checksum=b8c3cff9a0c60f727feaa1c622668729d0c0e02b6e1030b94860448d5d5465d6
