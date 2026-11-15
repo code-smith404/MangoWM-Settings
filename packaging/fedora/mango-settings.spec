@@ -11,6 +11,7 @@ Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  make
+BuildRequires:  python3
 Requires:       python3
 Requires:       python3-gobject
 Requires:       gtk3

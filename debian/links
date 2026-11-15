@@ -1,2 +1,0 @@
-# usr/bin/mango-settings symlink target (the source file has a shebang)
-usr/share/mango-settings/mango-settings.py usr/bin/mango-settings

@@ -13,11 +13,16 @@ SLOT="0"
 KEYWORDS="~amd64 ~arm64 ~riscv"
 
 RDEPEND="
+	dev-lang/python
 	dev-python/pygobject:3
-	dev-lang/python:3.11
 	x11-libs/gtk+:3[introspection]
 "
-BDEPEND="sys-apps/coreutils"
+BDEPEND="
+	dev-lang/python
+	sys-devel/make
+"
+
+DOCS=( README.md CHANGELOG.md )
 
 src_compile() {
 	python3 -m py_compile mango-settings.py || die

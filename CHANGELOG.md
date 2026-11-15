@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — distribution packaging
+
+- **Native packages for every major distribution**: Arch/AUR (stable and
+  `-git`), Debian/Ubuntu, Fedora/RHEL, openSUSE, Alpine, Void, Gentoo and
+  Solus, plus the existing Nix flake and a new Flatpak manifest.
+- **New man page** (`man mango-settings`) and **AppStream metainfo**, both
+  installed by `make install` and every package. `make install` also fixes
+  the desktop entry's `Exec`/`TryExec` paths for staged installs.
+- **Release automation** builds `.deb`, `.rpm`, `.apk`, Arch and Flatpak
+  packages, attaches them to the GitHub release, publishes an APT and an RPM
+  repository on GitHub Pages, and updates the AUR.
+- See [docs/PACKAGING.md](docs/PACKAGING.md) for the package matrix, local
+  build commands and submission steps for each distribution.
+
 ## 2.2.2 — blurred, translucent window
 
 - **The window now gets a soft blur effect.** It is drawn as a translucent

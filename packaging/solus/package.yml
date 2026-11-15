@@ -14,7 +14,7 @@ description : |
 homepage    : https://github.com/code-smith404/MangoWM-Settings
 networking  : true
 rundeps     :
-    - python-3
+    - python
     - python-gobject
     - gtk-3
 setup       : |
