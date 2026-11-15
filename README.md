@@ -59,6 +59,7 @@ The installer installs into `~/.local` by default. Options:
 | `--no-deps` | skip the PyGObject install prompt |
 | `--print-deps` | print the package names for your distro and exit |
 | `--ref BRANCH` | install from a branch/tag |
+| `--from DIR` | install from a local checkout instead of downloading |
 | `--uninstall` | remove everything (your MangoWM config is kept) |
 
 ### Distro packages

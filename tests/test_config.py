@@ -9,6 +9,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _module_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "mango-settings.py")
@@ -486,7 +487,10 @@ class WallpaperTests(TempHomeTestCase):
         self.assertIn("-i ~/new.png", text)
 
     def test_apply_wallpaper_missing_file(self):
-        ok, msg = ms.apply_wallpaper("~/does-not-exist.png", "fill")
+        # Pretend the backend is installed so the image check is exercised
+        # even on machines/CI images without swaybg.
+        with mock.patch.object(ms, "run_cmd", return_value=(0, "")):
+            ok, msg = ms.apply_wallpaper("~/does-not-exist.png", "fill")
         self.assertFalse(ok)
         self.assertIn("No such image", msg)
 

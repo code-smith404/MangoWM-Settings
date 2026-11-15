@@ -11,6 +11,7 @@ SYSTEM=0
 DO_DEPS=1
 PRINT_DEPS=0
 UNINSTALL=0
+SRC_DIR=""
 
 # --- argument parsing -------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -20,12 +21,14 @@ while [ $# -gt 0 ]; do
         --prefix=*)  PREFIX="${1#--prefix=}" ;;
         --ref)       REF="$2"; shift ;;
         --ref=*)     REF="${1#--ref=}" ;;
+        --from)      SRC_DIR="$2"; shift ;;
+        --from=*)    SRC_DIR="${1#--from=}" ;;
         --deps)      DO_DEPS=1 ;;
         --no-deps)   DO_DEPS=0 ;;
         --print-deps) PRINT_DEPS=1 ;;
         --uninstall) UNINSTALL=1 ;;
         -h|--help)
-            echo "usage: install.sh [--system | --prefix DIR] [--ref BRANCH]"
+            echo "usage: install.sh [--system | --prefix DIR] [--ref BRANCH | --from DIR]"
             echo "                  [--deps | --no-deps | --print-deps] [--uninstall]"
             exit 0 ;;
         *) echo "install.sh: unknown option: $1" >&2; exit 2 ;;
@@ -133,12 +136,24 @@ fi
 # --- install ----------------------------------------------------------------------
 mkdir -p "$BIN_DIR" "$SHARE_DIR" "$APP_DIR" "$ICON_DIR" "$MAN_DIR" "$METAINFO_DIR"
 
-echo "==> Downloading mango-settings.py (ref: $REF)"
-fetch "$RAW_BASE/$REF/mango-settings.py" "$SHARE_DIR/mango-settings.py" || {
-    echo "Download failed — check your network connection or --ref value." >&2; exit 1; }
-fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.svg" "$ICON_DIR/$DESKTOP_ID.svg" || true
-fetch "$RAW_BASE/$REF/data/mango-settings.1" "$MAN_DIR/mango-settings.1" || true
-fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.metainfo.xml" "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml" || true
+echo "==> Installing mango-settings (${SRC_DIR:-ref: $REF})"
+if [ -n "$SRC_DIR" ]; then
+    [ -f "$SRC_DIR/mango-settings.py" ] || {
+        echo "--from: no mango-settings.py in $SRC_DIR" >&2; exit 1; }
+    cp -f "$SRC_DIR/mango-settings.py" "$SHARE_DIR/mango-settings.py"
+    [ -f "$SRC_DIR/data/$DESKTOP_ID.svg" ] && \
+        cp -f "$SRC_DIR/data/$DESKTOP_ID.svg" "$ICON_DIR/$DESKTOP_ID.svg"
+    [ -f "$SRC_DIR/data/mango-settings.1" ] && \
+        cp -f "$SRC_DIR/data/mango-settings.1" "$MAN_DIR/mango-settings.1"
+    [ -f "$SRC_DIR/data/$DESKTOP_ID.metainfo.xml" ] && \
+        cp -f "$SRC_DIR/data/$DESKTOP_ID.metainfo.xml" "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml"
+else
+    fetch "$RAW_BASE/$REF/mango-settings.py" "$SHARE_DIR/mango-settings.py" || {
+        echo "Download failed — check your network connection or --ref value." >&2; exit 1; }
+    fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.svg" "$ICON_DIR/$DESKTOP_ID.svg" || true
+    fetch "$RAW_BASE/$REF/data/mango-settings.1" "$MAN_DIR/mango-settings.1" || true
+    fetch "$RAW_BASE/$REF/data/$DESKTOP_ID.metainfo.xml" "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml" || true
+fi
 
 # sanity check: valid python?
 if command -v python3 >/dev/null 2>&1; then

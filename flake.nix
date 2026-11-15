@@ -24,7 +24,7 @@
               python3Packages.pygobject3
               gtk3
             ];
-            nativeBuildInputs = with pkgs; [ wrapGAppsHook ];
+            nativeBuildInputs = with pkgs; [ wrapGAppsHook3 ];
             dontWrapPythonPrograms = false;
             installPhase = ''
               runHook preInstall

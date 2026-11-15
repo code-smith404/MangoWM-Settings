@@ -41,6 +41,8 @@ jobs:
           flatpak --user remote-add --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak --user install -y flathub org.gnome.Platform//48 org.gnome.Sdk//48
+      - name: Use the tag's real checksum in the manifest
+        run: packaging/scripts/update-checksums.sh
       - name: Build Flatpak bundle
         run: |
           flatpak-builder --user --disable-rofiles-fuse --repo=repo \
