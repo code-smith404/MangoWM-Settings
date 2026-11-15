@@ -1,13 +1,12 @@
-Architectures: all amd64 arm64 armhf
-Codename: stable
-Components: main
-Date: Sun, 15 Nov 2026 14:12:51 +0000
-Description: Mango Settings APT repository
-Label: Mango Settings
 Origin: MangoWM-Settings
+Label: Mango Settings
 Suite: stable
+Codename: stable
+Date: Sun, 15 Nov 2026 14:15:49 +0000
+Architectures: all amd64 arm64 armhf
+Components: main
+Description: Mango Settings APT repository
 MD5Sum:
- 5519fcb04d847b528213dbeda47af218              213 Release
  80181ef591d96b203aed14324056edcd             1352 main/binary-all/Packages
  f3f6a4fd94de185826066a7b09307b4c              851 main/binary-all/Packages.gz
  80181ef591d96b203aed14324056edcd             1352 main/binary-amd64/Packages
@@ -17,7 +16,6 @@ MD5Sum:
  80181ef591d96b203aed14324056edcd             1352 main/binary-armhf/Packages
  f3f6a4fd94de185826066a7b09307b4c              851 main/binary-armhf/Packages.gz
 SHA1:
- b1b6d25b64cc408895fde33f7549ec3c853017f4              213 Release
  9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-all/Packages
  8a9b285c82932088005b6c0aa5374517f540ad77              851 main/binary-all/Packages.gz
  9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-amd64/Packages
@@ -27,7 +25,6 @@ SHA1:
  9571a6cbb6a7d03ed2b5186070c94704ca473a1f             1352 main/binary-armhf/Packages
  8a9b285c82932088005b6c0aa5374517f540ad77              851 main/binary-armhf/Packages.gz
 SHA256:
- 0c2df879334c5adfb523a11b44e97c9ab093edbcbe89c914a4a5fc06e70210ff              213 Release
  906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-all/Packages
  4d70f181ff461091fb136900ce49e0e3018997fa2fad84d4b1e339a2c910c487              851 main/binary-all/Packages.gz
  906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-amd64/Packages
@@ -36,13 +33,3 @@ SHA256:
  4d70f181ff461091fb136900ce49e0e3018997fa2fad84d4b1e339a2c910c487              851 main/binary-arm64/Packages.gz
  906b9d29ba094c343dbc494182ef269e1380aeaf3b388cfc40abaed1e83e78f0             1352 main/binary-armhf/Packages
  4d70f181ff461091fb136900ce49e0e3018997fa2fad84d4b1e339a2c910c487              851 main/binary-armhf/Packages.gz
-SHA512:
- cee427b722913518a535f295e2a83a9e7d48ba4f932cf0ded2be1678b179e524c62c81b71e222f8864abb4866a63e8ea2575b53491e91441895c6c0f900e867a              213 Release
- 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-all/Packages
- f60cb4fbd63ed56b9e281b8c19f2417d727837575114995a29fa6878f2fa341897ebc2ed848f78f084e0db92e53b3db7b2e4ea4043a733b4923a1c1f5a0443b3              851 main/binary-all/Packages.gz
- 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-amd64/Packages
- f60cb4fbd63ed56b9e281b8c19f2417d727837575114995a29fa6878f2fa341897ebc2ed848f78f084e0db92e53b3db7b2e4ea4043a733b4923a1c1f5a0443b3              851 main/binary-amd64/Packages.gz
- 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-arm64/Packages
- f60cb4fbd63ed56b9e281b8c19f2417d727837575114995a29fa6878f2fa341897ebc2ed848f78f084e0db92e53b3db7b2e4ea4043a733b4923a1c1f5a0443b3              851 main/binary-arm64/Packages.gz
- 58fffff7bb9f296f39d7c34be069161d231ef5d42d13a70b111ddf8fab822035cd30d7a2943006facf84ad8ea6e24bb92cec06de751943fd6c9a716b89cb4cd9             1352 main/binary-armhf/Packages
- f60cb4fbd63ed56b9e281b8c19f2417d727837575114995a29fa6878f2fa341897ebc2ed848f78f084e0db92e53b3db7b2e4ea4043a733b4923a1c1f5a0443b3              851 main/binary-armhf/Packages.gz
