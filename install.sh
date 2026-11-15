@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2016  # $bindir/$@ are written into the generated launcher
 # Mango Settings installer — POSIX sh, works on Alpine, Void, Debian (dash),
 # Fedora, Arch, openSUSE and NixOS (via nix-shell launcher).
 #   curl -fsSL https://raw.githubusercontent.com/code-smith404/MangoWM-Settings/main/install.sh | sh
@@ -47,6 +48,12 @@ ICON_DIR="$PREFIX/share/icons/hicolor/scalable/apps"
 MAN_DIR="$PREFIX/share/man/man1"
 METAINFO_DIR="$PREFIX/share/metainfo"
 DESKTOP_ID="io.github.code_smith404.MangoSettings"
+
+# NixOS has no /usr/bin/python3: use a nix shell launcher instead.
+NIX_PY=""
+if [ "${MANGO_SETTINGS_FAMILY:-}" = nix ]; then
+    NIX_PY="nix --extra-experimental-features 'nix-command flakes' shell nixpkgs#python3 nixpkgs#python3Packages.pygobject3 nixpkgs#gtk3 --command python3"
+fi
 
 # --- dependency database -----------------------------------------------------
 # one line per package manager: name<TAB>packages
@@ -123,7 +130,14 @@ fetch() {
 # --- uninstall -------------------------------------------------------------------
 if [ "$UNINSTALL" = 1 ]; then
     echo "==> Removing Mango Settings from $PREFIX"
-    rm -f "$BIN_DIR/mango-settings" "$APP_DIR/$DESKTOP_ID.desktop"
+    # Only remove the launcher if it is ours; leave foreign files alone.
+    if [ -f "$BIN_DIR/mango-settings" ] && \
+       grep -q "share/mango-settings/mango-settings.py" "$BIN_DIR/mango-settings" 2>/dev/null; then
+        rm -f "$BIN_DIR/mango-settings"
+    elif [ -e "$BIN_DIR/mango-settings" ]; then
+        echo "keeping $BIN_DIR/mango-settings (not installed by Mango Settings)"
+    fi
+    rm -f "$APP_DIR/$DESKTOP_ID.desktop"
     rm -f "$ICON_DIR/$DESKTOP_ID.svg"
     rm -f "$MAN_DIR/mango-settings.1"
     rm -f "$METAINFO_DIR/$DESKTOP_ID.metainfo.xml"
@@ -159,6 +173,8 @@ fi
 if command -v python3 >/dev/null 2>&1; then
     python3 -m py_compile "$SHARE_DIR/mango-settings.py" 2>/dev/null || {
         echo "Downloaded file is not valid Python — aborting." >&2; exit 1; }
+elif [ -n "$NIX_PY" ] && command -v nix >/dev/null 2>&1; then
+    echo "==> python3 is not in PATH; the launcher will use nix shell"
 else
     echo "python3 not found — install Python 3.8+ first." >&2
     print_deps_for
@@ -167,11 +183,19 @@ fi
 
 chmod +x "$SHARE_DIR/mango-settings.py"
 
+# The generated launcher must keep $bindir literal until it runs.
+# shellcheck disable=SC2016
 cat > "$BIN_DIR/mango-settings" <<'LAUNCHER'
 #!/bin/sh
 bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec python3 "$bindir/../share/mango-settings/mango-settings.py" "$@"
 LAUNCHER
+if [ -n "$NIX_PY" ]; then
+    printf 'exec %s "$bindir/../share/mango-settings/mango-settings.py" "$@"\n' \
+        "$NIX_PY" >> "$BIN_DIR/mango-settings"
+else
+    printf 'exec python3 "$bindir/../share/mango-settings/mango-settings.py" "$@"\n' \
+        >> "$BIN_DIR/mango-settings"
+fi
 chmod +x "$BIN_DIR/mango-settings"
 
 # Generate the desktop entry with absolute Exec/TryExec paths.  Launchers
