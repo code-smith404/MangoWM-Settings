@@ -14,8 +14,8 @@ GitHub Pages.
 
 | Family | Package manager | Files | Install (end user) | Status |
 |---|---|---|---|---|
-| Arch / Manjaro / EndeavourOS | pacman (AUR) | `packaging/arch/PKGBUILD` | `yay -S mango-settings` | Published by the release workflow |
-| Arch (development) | pacman (AUR) | `packaging/arch/PKGBUILD-git` | `yay -S mango-settings-git` | Published by the release workflow |
+| Arch / Manjaro / EndeavourOS | pacman (AUR) | `packaging/arch/PKGBUILD` | `cd packaging/arch && makepkg -si` | AUR publish step runs when `AUR_SSH_PRIVATE_KEY` is configured |
+| Arch (development) | pacman (AUR) | `packaging/arch/PKGBUILD-git` | `git clone --depth=1 https://github.com/code-smith404/MangoWM-Settings` then use `PKGBUILD-git` | AUR publish step runs when `AUR_SSH_PRIVATE_KEY` is configured |
 | Debian 12+ / Ubuntu 22.04+ / Mint / Pop!_OS | apt | `debian/`, hosted repo | see [APT repository](#apt-repository) | Repo published by CI; official archive needs an ITP |
 | Fedora / RHEL / AlmaLinux / Rocky | dnf | `packaging/fedora/mango-settings.spec`, hosted repo | see [RPM repository](#rpm-repository) | Repo published by CI; official repos need a review |
 | openSUSE Tumbleweed / Leap | zypper | `packaging/opensuse/mango-settings.spec` | `zypper addrepo ...` / OBS | Spec ready; submit to OBS |
@@ -236,7 +236,7 @@ Never rebuild the AUR package from files in the tag tree.
 Enable GitHub Pages for this repository with the `gh-pages` branch as the
 source. The release workflow creates that branch on the first release.
 
-Configure these repository secrets to enable publishing:
+Configure these repository secrets to enable publishing. Without `AUR_SSH_PRIVATE_KEY` the AUR job is skipped, so Arch users build `packaging/arch/PKGBUILD` locally until the key is added:
 
 | Secret | Purpose |
 |---|---|

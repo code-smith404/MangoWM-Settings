@@ -70,7 +70,7 @@ full build and submission instructions are in
 
 | Distro / package manager | Install |
 |---|---|
-| Arch / Manjaro (AUR) | `yay -S mango-settings` or `yay -S mango-settings-git` |
+| Arch / Manjaro (AUR) | `cd packaging/arch && makepkg -si` (or `yay -S mango-settings` once the AUR package is published) |
 | Debian / Ubuntu (apt) | `packaging/scripts/build-deb.sh` or the hosted repo below |
 | Fedora / RHEL (dnf) | `packaging/scripts/build-rpm.sh` or the hosted repo below |
 | Alpine (apk) | `packaging/alpine/APKBUILD` |
