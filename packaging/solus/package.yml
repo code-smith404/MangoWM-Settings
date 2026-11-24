@@ -1,8 +1,8 @@
 name        : mango-settings
-version     : 2.2.2
+version     : 2.3.0
 release     : 1
 source      :
-    - https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v2.2.2.tar.gz : b8c3cff9a0c60f727feaa1c622668729d0c0e02b6e1030b94860448d5d5465d6
+    - https://github.com/code-smith404/MangoWM-Settings/archive/refs/tags/v2.3.0.tar.gz : b8c3cff9a0c60f727feaa1c622668729d0c0e02b6e1030b94860448d5d5465d6
 license     : MIT
 component   : desktop
 summary     : GTK3 settings manager for the MangoWM Wayland compositor

@@ -1,3 +1,14 @@
+mango-settings (2.3.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Redesigned after the official MangoWM web settings: collapsible sidebar
+    groups, header bar with search and undo/redo, web-style cards and rows.
+  * New pages: Environment Variables, Colors, Window Effects, Cursor,
+    Tiling/Dwindle/Scroller, Keyboard/Pointer/Trackpad, Animation
+    General/Timing/Curves, Focus/Drag/Scratchpad and Layer/Tag rules.
+
+ -- Harikesh Verma <code-smith404@users.noreply.github.com>  Mon, 24 Nov 2025 17:00:00 +0000
+
 mango-settings (2.2.2-1) unstable; urgency=medium
 
   * New upstream release.

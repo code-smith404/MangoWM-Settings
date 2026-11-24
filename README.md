@@ -6,26 +6,42 @@ Python file, GTK 3, no bloat.
 
 ## Features
 
-- **Sidebar navigation** with 15 icon-labelled pages: Appearance, Animations,
-  Window behavior, Layouts, Keybindings, Workspaces, Window rules, Monitors,
-  Input devices, Startup apps, Theming, Background, Notifications, Config
-  files, System info
+- **Navigation like the official web settings**
+  ([mangowm.github.io/settings](https://mangowm.github.io/settings/)): root
+  pages **Autostart**, **Environment Variables** and **Bindings**, plus
+  collapsible groups — **Appearance** (Colors, Window Effects, Gaps &
+  Borders, Cursor), **Layout** (Tiling, Dwindle, Scroller), **Input
+  Devices** (Keyboard, Pointer, Trackpad), **Animations** (General, Timing,
+  Curves), **Behaviour** (Focus, Drag & Floating, Scratchpad), **Rules**
+  (Monitor, Tag, Window, Layer rules) and **Desktop & System** (Theming,
+  Background, Notifications, Config Files, System Info)
+- **Web-style chrome**: slim header bar with sidebar toggle, page title,
+  centered search pill, config-files button, setup menu, undo/redo, save,
+  reload and quit; drag the header to move the window
+- **Cards and rows like the web panels**: titled rounded cards, rows with
+  label + description on the left and the control on the right — switches
+  with an On/Off indicator, sliders with numeric readouts, dropdowns, color
+  pickers writing `0xRRGGBBAA`, and a hover reset (↺) per row that removes
+  the key from whichever file defined it; explicit settings are bold and
+  show "Set in file line N", the rest show MangoWM's default
+- **Undo/redo** (`Ctrl+Z` / `Ctrl+Shift+Z`) for setting changes, resets and
+  rule/env/autostart edits
+- **Terminal-style list editors**: `$ …` add rows for `exec_once`, `exec`,
+  `env` and binds, matching the web Autostart page
+- **Setup menu**: create the default config, open the config folder, back up
+  the config
+- **Mango palette** (light and dark, from the web theme tokens) with
+  **system / dark / light** themes for the app itself
 - **Chromeless, blurred window** — no title bar; the surface is translucent so
   MangoWM's blur (`blur=1`) shows the desktop through it, with rounded
   corners. A **Blur** checkbox in the sidebar toggles the effect (remembered
-  in `~/.config/mango-settings/settings.ini`). Search, theme and the
-  Save / Reload Mango / Quit controls live in the sidebar; size and sidebar
-  width are remembered
-- **Dark / light / system theme** for the app itself
+  in `~/.config/mango-settings/settings.ini`); size and sidebar width are
+  remembered
 - **Background page**: set the wallpaper live (swaybg, swww or feh) and
   persist it by updating the wallpaper line in `autostart.sh`
-- **Search across settings** (`Ctrl+F`): filters the sidebar to pages that
-  contain matches and the page to the matching rows; `Esc` clears it
-- **Reset-to-default (↺) on every setting** — removes the key from whichever
-  file defined it; explicit settings are bold and show "Set in file line N",
-  the rest show MangoWM's default
-- **Live page search** (`Ctrl+F`) and shortcuts: `Ctrl+S` save, `Ctrl+R`
-  reload MangoWM, `Ctrl+Q` quit
+- **Search across settings** (`Ctrl+F`/`Ctrl+K`): filters the sidebar to pages
+  that contain matches and the page to the matching rows; `Esc` clears it
+- **Shortcuts**: `Ctrl+S` save, `Ctrl+R` reload MangoWM, `Ctrl+Q` quit
 - **Safe config engine** that reads `~/.config/mango/config.conf` exactly
   like MangoWM (`source=`, `source_optional=`, `var=`), preserves comments,
   blank lines, ordering, symlinks, permissions, CRLF and missing final

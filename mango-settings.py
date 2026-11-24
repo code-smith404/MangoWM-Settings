@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "2.2.2"
+VERSION = "2.3.0"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -376,52 +376,266 @@ class OptDef(object):
         return True, ""
 
 
-PAGE_ORDER = [
-    "appearance", "animations", "behavior", "layouts", "keybindings",
-    "workspaces", "windowrules", "monitors", "input", "startup",
-    "theming", "background", "notifications", "files", "system",
+# ---------------------------------------------------------------------------
+# Navigation tree
+#
+# Mirrors the official MangoWM settings layout (mangowm.github.io/settings):
+# root pages, collapsible groups and the option-to-subpage mapping.
+# ---------------------------------------------------------------------------
+
+# (page_id, parent_id, title, icon candidates, description, kind)
+# kind: "group"  — collapsible sidebar container
+#       "autostart" / "env" / "binds" / "records" / "schema" / "special"
+NAV_PAGES = [
+    ("autostart", None, "Autostart",
+     ["application-x-executable", "utilities-terminal"],
+     "Applications and scripts that run when mangowm starts or reloads.",
+     "autostart"),
+    ("environment", None, "Environment Variables",
+     ["application-add", "utilities-terminal"],
+     "Environment variables passed on when mangowm starts applications.",
+     "env"),
+    ("bindings", None, "Bindings",
+     ["preferences-desktop-keyboard-shortcuts", "preferences-desktop-keyboard",
+      "input-keyboard"],
+     "Keybindings: modifiers, keys, actions and their arguments.",
+     "binds"),
+
+    ("appearance", None, "Appearance",
+     ["preferences-desktop-theme", "applications-graphics"], "", "group"),
+    ("colors", "appearance", "Colors",
+     ["applications-graphics", "color-select"],
+     "Window, border and bar colors as 0xRRGGBBAA values.", "schema"),
+    ("window-effects", "appearance", "Window Effects",
+     ["applications-graphics", "preferences-desktop-theme"],
+     "Opacity, blur and shadows for windows and layer-shell surfaces.",
+     "schema"),
+    ("gaps-borders", "appearance", "Gaps & Borders",
+     ["preferences-desktop-wallpaper", "window-new"],
+     "Spacing between windows and the border drawn around them.",
+     "schema"),
+    ("cursor", "appearance", "Cursor",
+     ["input-mouse", "preferences-desktop-peripherals"],
+     "Cursor theme, size and auto-hide behaviour.", "schema"),
+
+    ("layout", None, "Layout",
+     ["view-grid", "view-paged"], "", "group"),
+    ("layout-tiling", "layout", "Tiling",
+     ["view-grid", "preferences-desktop"],
+     "Master-stack tiling: master area, behavior of new windows.", "schema"),
+    ("layout-dwindle", "layout", "Dwindle",
+     ["view-grid", "preferences-desktop"],
+     "Spiral tiling: how splits are chosen and resized.", "schema"),
+    ("layout-scroller", "layout", "Scroller",
+     ["view-grid", "preferences-desktop"],
+     "Scrolling column layout and window proportions.", "schema"),
+
+    ("input-devices", None, "Input Devices",
+     ["input-mouse", "preferences-desktop-peripherals"], "", "group"),
+    ("keyboard", "input-devices", "Keyboard",
+     ["input-keyboard", "preferences-desktop-keyboard"],
+     "Repeat rate, numlock and XKB rules.", "schema"),
+    ("pointer", "input-devices", "Pointer",
+     ["input-mouse", "preferences-desktop-peripherals"],
+     "Mouse acceleration, handedness and natural scrolling.", "schema"),
+    ("trackpad", "input-devices", "Trackpad",
+     ["input-touchpad", "input-tablet", "input-mouse"],
+     "Tapping, scrolling and disable-while-typing.", "schema"),
+
+    ("animations", None, "Animations",
+     ["media-playback-start", "preferences-system-windows"], "", "group"),
+    ("animations-general", "animations", "General",
+     ["media-playback-start", "preferences-system-windows"],
+     "Master switches and animation styles for windows and layers.",
+     "schema"),
+    ("animations-timing", "animations", "Timing",
+     ["media-playback-start", "preferences-system-windows"],
+     "How long each animation runs and how it fades.", "schema"),
+    ("animations-curves", "animations", "Curves",
+     ["media-playback-start", "preferences-system-windows"],
+     "Easing curves, expressed as cubic-bezier values.", "schema"),
+
+    ("behaviour", None, "Behaviour",
+     ["preferences-system-windows", "window-new"], "", "group"),
+    ("focus", "behaviour", "Focus",
+     ["preferences-desktop-focus", "preferences-system-windows"],
+     "Sloppy focus, cross-monitor and cross-tag movement.", "schema"),
+    ("drag", "behaviour", "Drag & Floating",
+     ["window-drag-and-drop", "window-new"],
+     "Dragging windows, snapping and floating placement.", "schema"),
+    ("scratchpad", "behaviour", "Scratchpad",
+     ["window-new", "preferences-system-windows"],
+     "The hidden scratchpad window and its size.", "schema"),
+
+    ("rules", None, "Rules",
+     ["window-new", "text-x-generic"], "", "group"),
+    ("monitor-rules", "rules", "Monitor Rules",
+     ["video-display", "computer"],
+     "Per-monitor placement, mode and scale.", "records"),
+    ("tag-rules", "rules", "Tag Rules",
+     ["view-paged", "view-grid"],
+     "Per-tag layout and monitor assignment.", "records-tag"),
+    ("window-rules", "rules", "Window Rules",
+     ["window-new", "preferences-system-windows"],
+     "Apply tags, floating state and monitors to windows by class/title.",
+     "records-window"),
+    ("layer-rules", "rules", "Layer Rules",
+     ["layer-shell", "window-new"],
+     "Rules for layer-shell surfaces (bars, launchers, notifications).",
+     "records-layer"),
+
+    ("desktop", None, "Desktop & System",
+     ["preferences-desktop", "computer"], "", "group"),
+    ("theming", "desktop", "Theming",
+     ["applications-graphics", "preferences-desktop-theme"],
+     "GTK, icon and cursor themes for applications.", "theming"),
+    ("background", "desktop", "Background",
+     ["preferences-desktop-wallpaper", "applications-graphics"],
+     "Set the wallpaper and remember it in autostart.sh.", "background"),
+    ("notifications", "desktop", "Notifications",
+     ["preferences-system-notifications", "dialog-information"],
+     "Which notification daemon is running and how it is configured.",
+     "notifications"),
+    ("files", "desktop", "Config Files",
+     ["text-x-generic", "document-open", "accessories-text-editor"],
+     "Open and edit every loaded configuration file as text.", "files"),
+    ("system", "desktop", "System Info",
+     ["computer", "dialog-information"],
+     "Compositor version, monitors and detected tools.", "system"),
 ]
 
-PAGE_TITLES = {
-    "appearance": "Appearance",
-    "animations": "Animations",
-    "behavior": "Window behavior",
-    "layouts": "Layouts",
-    "keybindings": "Keybindings",
-    "workspaces": "Workspaces",
-    "windowrules": "Window rules",
-    "monitors": "Monitors",
-    "input": "Input devices",
-    "startup": "Startup apps",
-    "theming": "Theming",
-    "background": "Background",
-    "notifications": "Notifications",
-    "files": "Config files",
-    "system": "System info",
+PAGE_ORDER = [p[0] for p in NAV_PAGES]
+PAGE_TITLES = dict((p[0], p[2]) for p in NAV_PAGES)
+PAGE_PARENT = dict((p[0], p[1]) for p in NAV_PAGES)
+PAGE_DESCRIPTIONS = dict((p[0], p[4]) for p in NAV_PAGES)
+PAGE_KIND = dict((p[0], p[5]) for p in NAV_PAGES)
+PAGE_ICON_CANDIDATES = dict((p[0], p[3]) for p in NAV_PAGES)
+
+# Old page keys and titles (pre-2.3) mapped onto the new tree so --page
+# arguments and bookmarks keep working.
+LEGACY_PAGE_ALIAS = {
+    "appearance": "gaps-borders",
+    "behavior": "focus",
+    "layouts": "layout-tiling",
+    "keybindings": "bindings",
+    "workspaces": "tag-rules",
+    "windowrules": "window-rules",
+    "monitors": "monitor-rules",
+    "input": "keyboard",
+    "startup": "autostart",
 }
 
-# Candidate icons per page.  The first name that exists in the user's icon
-# theme is used; symbolic variants are preferred so icons follow the theme
-# colour.  Several names are tried because themes differ (Adwaita ships
-# "preferences-system-windows-symbolic", Papirus does not).
-PAGE_ICON_CANDIDATES = {
-    "appearance": ["preferences-desktop-theme", "applications-graphics",
-                   "preferences-desktop"],
-    "animations": ["media-playback-start", "preferences-system-windows"],
-    "behavior": ["preferences-system-windows", "window-new", "preferences-system"],
-    "layouts": ["view-grid", "view-paged"],
-    "keybindings": ["preferences-desktop-keyboard", "input-keyboard"],
-    "workspaces": ["view-paged", "view-grid"],
-    "windowrules": ["window-new", "preferences-system-windows"],
-    "monitors": ["video-display", "computer"],
-    "input": ["input-mouse", "preferences-desktop-peripherals", "input-keyboard"],
-    "startup": ["application-x-executable", "utilities-terminal"],
-    "theming": ["applications-graphics", "preferences-desktop-theme"],
-    "background": ["preferences-desktop-wallpaper", "applications-graphics"],
-    "notifications": ["preferences-system-notifications", "dialog-information"],
-    "files": ["text-x-generic", "document-open", "accessories-text-editor"],
-    "system": ["computer", "dialog-information"],
+LEGACY_TITLE_ALIAS = {
+    "window behavior": "focus",
+    "window rules": "window-rules",
+    "input devices": "keyboard",
+    "startup apps": "autostart",
+    "window rules": "window-rules",
 }
+
+# Every schema option mapped to its page in the tree above.  The mapping
+# follows the official web settings' field lists.
+KEY_PAGE = {
+    # appearance — colors
+    "root_color": "colors", "border_color": "colors", "focus_color": "colors",
+    "urgent_color": "colors", "shadows_color": "colors",
+    # appearance — window effects
+    "blur": "window-effects", "blur_layer": "window-effects",
+    "blur_optimized": "window-effects", "blur_params_num_passes": "window-effects",
+    "blur_params_radius": "window-effects", "blur_params_noise": "window-effects",
+    "blur_params_brightness": "window-effects", "blur_params_contrast": "window-effects",
+    "blur_params_saturation": "window-effects",
+    "focused_opacity": "window-effects", "unfocused_opacity": "window-effects",
+    "shadows": "window-effects", "layer_shadows": "window-effects",
+    "shadow_only_floating": "window-effects", "shadows_size": "window-effects",
+    "shadows_blur": "window-effects", "shadows_position_x": "window-effects",
+    "shadows_position_y": "window-effects",
+    # appearance — gaps & borders
+    "gap_inner_horizontal": "gaps-borders", "gap_inner_vertical": "gaps-borders",
+    "gap_outer_horizontal": "gaps-borders", "gap_outer_vertical": "gaps-borders",
+    "smart_gaps": "gaps-borders", "border_px": "gaps-borders",
+    "border_radius": "gaps-borders", "no_border_when_single": "gaps-borders",
+    "no_radius_when_single": "gaps-borders",
+    # appearance — cursor
+    "cursor_theme": "cursor", "cursor_size": "cursor",
+    "cursor_hide_timeout": "cursor",
+    # layout — tiling
+    "circle_layout": "layout-tiling", "default_master_count": "layout-tiling",
+    "default_master_factor": "layout-tiling", "new_is_master": "layout-tiling",
+    "monocle_no_border": "layout-tiling", "monocle_no_gap": "layout-tiling",
+    "monocle_no_radius": "layout-tiling", "monocle_tab_mode": "layout-tiling",
+    "deck_tab_mode": "layout-tiling",
+    # layout — dwindle
+    "dwindle_smart_split": "layout-dwindle", "dwindle_smart_resize": "layout-dwindle",
+    "dwindle_manual_split": "layout-dwindle", "dwindle_preserve_split": "layout-dwindle",
+    "dwindle_horizontal_split": "layout-dwindle",
+    "dwindle_vertical_split": "layout-dwindle",
+    "dwindle_drop_simple_split": "layout-dwindle",
+    # layout — scroller
+    "scroller_structs": "layout-scroller",
+    "scroller_default_proportion": "layout-scroller",
+    "scroller_default_proportion_single": "layout-scroller",
+    "scroller_ignore_proportion_single": "layout-scroller",
+    "scroller_prefer_center": "layout-scroller", "scroller_focus_center": "layout-scroller",
+    "scroller_proportion_preset": "layout-scroller",
+    "edge_scroller_pointer_focus": "layout-scroller",
+    # input — keyboard
+    "numlock_on": "keyboard", "repeat_delay": "keyboard", "repeat_rate": "keyboard",
+    "xkb_rules_layout": "keyboard", "xkb_rules_variant": "keyboard",
+    "xkb_rules_options": "keyboard",
+    # input — pointer
+    "mouse_accel_profile": "pointer", "mouse_accel_speed": "pointer",
+    "mouse_left_handed": "pointer", "mouse_middle_button_emulation": "pointer",
+    "mouse_natural_scrolling": "pointer",
+    # input — trackpad
+    "disable_trackpad": "trackpad", "tap_to_click": "trackpad",
+    "tap_and_drag": "trackpad", "drag_lock": "trackpad",
+    "trackpad_natural_scrolling": "trackpad",
+    "trackpad_disable_while_typing": "trackpad",
+    "trackpad_left_handed": "trackpad",
+    "trackpad_middle_button_emulation": "trackpad",
+    "swipe_min_threshold": "trackpad",
+    # animations — general
+    "animations": "animations-general", "layer_animations": "animations-general",
+    "animation_type_open": "animations-general",
+    "animation_type_close": "animations-general",
+    "layer_animation_type_open": "animations-general",
+    "layer_animation_type_close": "animations-general",
+    "tag_animation_direction": "animations-general",
+    "zoom_initial_ratio": "animations-general", "zoom_end_ratio": "animations-general",
+    # animations — timing
+    "animation_duration_open": "animations-timing",
+    "animation_duration_close": "animations-timing",
+    "animation_duration_move": "animations-timing",
+    "animation_duration_focus": "animations-timing",
+    "animation_duration_tag": "animations-timing",
+    "animation_fade_in": "animations-timing", "animation_fade_out": "animations-timing",
+    "fade_in_begin_opacity": "animations-timing",
+    "fade_out_begin_opacity": "animations-timing",
+    # animations — curves
+    "animation_curve_open": "animations-curves",
+    "animation_curve_close": "animations-curves",
+    "animation_curve_move": "animations-curves",
+    "animation_curve_focus": "animations-curves",
+    "animation_curve_tag": "animations-curves",
+    # behaviour — focus
+    "sloppy_focus": "focus", "focus_cross_monitor": "focus",
+    "focus_cross_tag": "focus", "focus_on_activate": "focus",
+    "warp_cursor": "focus", "auto_reload_config": "focus",
+    # behaviour — drag & floating
+    "drag_warp_cursor": "drag", "drag_tile_to_tile": "drag",
+    "drag_tile_small": "drag", "enable_floating_snap": "drag",
+    "snap_distance": "drag", "float_full_to_top": "drag",
+    # behaviour — scratchpad
+    "single_scratchpad": "scratchpad", "scratchpad_cross_monitor": "scratchpad",
+    "scratchpad_width_ratio": "scratchpad", "scratchpad_height_ratio": "scratchpad",
+}
+
+def child_pages(parent_id):
+    """Page ids whose parent is ``parent_id``, in display order."""
+    return [p[0] for p in NAV_PAGES if p[1] == parent_id]
+
+
 # Kept for backwards compatibility / external scripts that import it.
 PAGE_ICONS = dict((k, v[0]) for k, v in PAGE_ICON_CANDIDATES.items())
 
@@ -712,6 +926,20 @@ def build_schema():
 
 
 SCHEMA = build_schema()
+
+# Schema options grouped per page in the new navigation tree (built once at
+# import; options not covered by KEY_PAGE fall back to Gaps & Borders).
+PAGE_SCHEMA = {}
+for _page, _opts in SCHEMA.items():
+    for _opt in _opts:
+        PAGE_SCHEMA.setdefault(KEY_PAGE.get(_opt.key, "gaps-borders"), []).append(_opt)
+
+# Record names behind the list pages, used by the search filter.
+PAGE_RECORD = {
+    "autostart": "exec_once", "environment": "env", "bindings": "bind",
+    "monitor-rules": "monitor", "tag-rules": "tag_rule",
+    "window-rules": "window_rule", "layer-rules": "layer_rule",
+}
 SCHEMA_OPTIONS = {}
 for _opts in SCHEMA.values():
     for _o in _opts:
@@ -727,7 +955,7 @@ def page_matches(key, needle):
 
     A page matches when its title/key matches or when any of its settings
     (label, key, section or description) does — so searching "gap" keeps
-    Appearance and Layouts in the sidebar.
+    Gaps & Borders in the sidebar.
     """
     if not needle:
         return True
@@ -736,11 +964,15 @@ def page_matches(key, needle):
         return True
     if needle in PAGE_TITLES.get(key, "").lower() or needle in key:
         return True
-    for opt in SCHEMA.get(key, []):
+    for opt in PAGE_SCHEMA.get(key, []):
         haystack = " ".join((opt.label or "", opt.key or "",
                              opt.group or "", opt.desc or "")).lower()
         if needle in haystack:
             return True
+    # List pages match on their record names (bind, window_rule, …).
+    record = PAGE_RECORD.get(key)
+    if record and needle in record:
+        return True
     return False
 
 
@@ -758,19 +990,27 @@ def resolve_page(name):
     """Map a ``--page`` argument to a page key, or None.
 
     Accepts the internal key (``files``), the display title (``Config
-    files``) and dash/underscore spellings (``window-behavior``), all
-    case-insensitively.
+    Files``) and dash/underscore spellings (``window-rules``), all
+    case-insensitively.  Pre-2.3 page keys (``windowrules``, ``startup``…)
+    are aliased onto the new tree so old commands keep working.
     """
     if not name:
         return None
     raw = name.strip().lower()
     if raw in PAGE_ORDER:
         return raw
+    if raw in LEGACY_PAGE_ALIAS:
+        return LEGACY_PAGE_ALIAS[raw]
     normalised = raw.replace("-", " ").replace("_", " ")
     for key in PAGE_ORDER:
         title = PAGE_TITLES[key].lower()
-        if normalised in (title, title.replace(" ", ""), key):
+        if normalised in (title, title.replace(" ", ""), key.replace("-", " ")):
             return key
+    if normalised in LEGACY_TITLE_ALIAS:
+        return LEGACY_TITLE_ALIAS[normalised]
+    for old, new in LEGACY_PAGE_ALIAS.items():
+        if normalised in (old, old.replace("-", " ")):
+            return new
     return None
 
 
@@ -1242,11 +1482,28 @@ def connected_monitors():
 
 
 def mango_version():
+    """MangoWM's version via mmsg, cleaned for display in the sidebar."""
     if mmsg_available():
         for argv in (["mmsg", "version"], ["mmsg", "--version"]):
             rc, out = run_cmd(argv)
-            if rc == 0 and out:
-                return out.splitlines()[0]
+            if rc != 0 or not out:
+                continue
+            first = out.splitlines()[0].strip()
+            # mmsg answers with JSON (or an error object) in some versions.
+            if first.startswith("{"):
+                try:
+                    import json
+                    data = json.loads(first)
+                    text = (data.get("version") or data.get("mango")
+                            or data.get("output") or "")
+                    if text and not data.get("error"):
+                        return str(text).strip()
+                except ValueError:
+                    pass
+                continue
+            if "error" in first.lower() or "unknown" in first.lower():
+                continue
+            return first
     return "unknown (mmsg not found)"
 
 
@@ -1498,6 +1755,36 @@ def set_autostart_wallpaper(path, mode, backend="swaybg",
 
 
 # ---------------------------------------------------------------------------
+# Color helpers (0xRRGGBBAA <-> Gdk.RGBA) for the web-style color picker
+# ---------------------------------------------------------------------------
+
+def _parse_mango_color(text):
+    """Parse MangoWM's 0xRRGGBB[AA] / #RRGGBB[AA] into a Gdk.RGBA-like tuple.
+
+    Returns (r, g, b, a) floats in 0..1, or None when unparsable.  Pure
+    Python so it stays testable without GTK.
+    """
+    if not text:
+        return None
+    m = re.match(r"^(?:0x|#|rgb\()?([0-9a-fA-F]{6})([0-9a-fA-F]{2})?\)?$", text.strip())
+    if not m:
+        return None
+    hexpart, aapart = m.group(1), m.group(2)
+    r = int(hexpart[0:2], 16) / 255.0
+    g = int(hexpart[2:4], 16) / 255.0
+    b = int(hexpart[4:6], 16) / 255.0
+    a = (int(aapart, 16) / 255.0) if aapart else 1.0
+    return (r, g, b, a)
+
+
+def _mango_color_from_rgba(rgba):
+    """Format a Gdk.RGBA as MangoWM's 0xRRGGBBAA string."""
+    def byte(v):
+        return max(0, min(255, int(round(v * 255.0))))
+    return "0x%02x%02x%02x%02x" % (byte(rgba.red), byte(rgba.green),
+                                   byte(rgba.blue), byte(rgba.alpha))
+
+# ---------------------------------------------------------------------------
 # GTK user interface
 # ---------------------------------------------------------------------------
 
@@ -1541,30 +1828,37 @@ def run_gui(args):
 
     # ------------------------------------------------------------------ pages
     class PageBase(Gtk.Box):
-        """Common scaffolding: titled, scrollable, reports changes upward."""
+        """Common scaffolding: a web-style page header (title + description)
+        and a scrollable content column that reports changes upward."""
 
         page_key = None
 
         def __init__(self, app):
             super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             self.app = app
-            self.set_border_width(12)
-            # Header: category icon + title, GNOME Settings style.
-            head_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            self.head_icon = Gtk.Image.new_from_icon_name(
-                page_icon(self.page_key, 32), Gtk.IconSize.DND)
-            head_box.pack_start(self.head_icon, False, False, 0)
-            head = Gtk.Label(xalign=0)
-            head.set_markup("<b>%s</b>" % GLib.markup_escape_text(PAGE_TITLES[self.page_key]))
-            head.get_style_context().add_class("large-title")
-            head_box.pack_start(head, False, False, 0)
-            self.pack_start(head_box, False, False, 2)
-            self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            scroll = Gtk.ScrolledWindow()
-            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroll.add(self.content)
-            self.pack_start(scroll, True, True, 0)
+            self.set_border_width(18)
             self.changed = False
+            # Panel header: large title + muted description, like the web
+            # settings' PanelHeader.
+            head = Gtk.Label(xalign=0)
+            head.set_markup("<span size='x-large' weight='bold'>%s</span>"
+                            % GLib.markup_escape_text(PAGE_TITLES[self.page_key]))
+            head.get_style_context().add_class("ms-page-title")
+            self.pack_start(head, False, False, 0)
+            if PAGE_DESCRIPTIONS.get(self.page_key):
+                desc = Gtk.Label(xalign=0)
+                desc.set_markup("<span size='small' alpha='75%%'>%s</span>"
+                                % GLib.markup_escape_text(
+                                    PAGE_DESCRIPTIONS[self.page_key]))
+                desc.get_style_context().add_class("ms-page-desc")
+                self.pack_start(desc, False, False, 0)
+            self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            scroll = Gtk.ScrolledWindow()
+            # Horizontal scrolling is the fallback for very narrow windows
+            # (MangoWM may size floating windows below GTK's minimum).
+            scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroll.add(self.content)
+            self.pack_start(scroll, True, True, 4)
             self.build()
 
         def build(self):
@@ -1584,94 +1878,81 @@ def run_gui(args):
             label = Gtk.Label(xalign=0)
             label.set_markup("<small>%s</small>" % GLib.markup_escape_text(text))
             label.set_line_wrap(True)
+            label.get_style_context().add_class("ms-note")
             self.content.pack_start(label, False, False, 2)
 
+        def add_card(self, title=None):
+            """A rounded titled card with a divider and a row container.
+
+            Mirrors the web settings' SectionCard primitive.  Returns the
+            body box that rows (or any content) are packed into.
+            """
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            card.get_style_context().add_class("ms-card")
+            if title:
+                head = Gtk.Label(xalign=0)
+                head.set_markup(GLib.markup_escape_text(title))
+                head.get_style_context().add_class("ms-card-title")
+                head.set_margin_start(14)
+                head.set_margin_top(10)
+                head.set_margin_bottom(8)
+                card.pack_start(head, False, False, 0)
+                card.pack_start(Gtk.Separator(), False, False, 0)
+            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            body.set_border_width(8)
+            body.get_style_context().add_class("ms-card-body")
+            card.pack_start(body, False, False, 0)
+            self.content.pack_start(card, False, False, 0)
+            return body
+
         def add_frame(self, title=None):
-            frame = Gtk.Frame()
-            frame.set_shadow_type(Gtk.ShadowType.NONE)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            frame.add(box)
-            self.content.pack_start(frame, False, False, 2)
-            return box
+            """Backwards-compatible alias for :meth:`add_card`."""
+            return self.add_card(title)
 
     class SchemaPage(PageBase):
-        """Generated from the schema: one row per option definition."""
+        """Generated from the schema: web-style rows inside titled cards."""
 
         def __init__(self, app, page_key):
             self.page_key = page_key
             super().__init__(app)
 
         def build(self):
-            grid = None
             current_group = None
             self.widgets = {}
             self.row_labels = {}
             needle = (getattr(self.app, "search_needle", "") or "").lower().strip()
             # A page-title match shows the whole page; otherwise only matching
-            # options are listed so Ctrl+F can search *settings*, not just pages.
+            # rows are listed so Ctrl+F can search *settings*, not just pages.
             title_match = bool(needle and needle in PAGE_TITLES[self.page_key].lower())
-            total = 0
-            shown = 0
-
-            def finish_frame():
-                if grid is not None:
-                    frame = self.add_frame()
-                    frame.add(grid)
+            opts = PAGE_SCHEMA.get(self.page_key, [])
+            total = len(opts)
 
             if needle and not title_match:
-                matched = [o for o in SCHEMA[self.page_key] if self._matches(o, needle)]
-                total = len(SCHEMA[self.page_key])
+                matched = [o for o in opts if self._matches(o, needle)]
                 if matched:
                     label = Gtk.Label(xalign=0)
                     label.set_markup("<small>%d of %d settings match \u201c%s\u201d</small>"
                                      % (len(matched), total,
                                         GLib.markup_escape_text(needle)))
-                    label.get_style_context().add_class("dim-label")
+                    label.get_style_context().add_class("ms-note")
                     self.content.pack_start(label, False, False, 2)
                 else:
                     self.add_note("No settings on this page match \u201c%s\u201d."
                                   % needle)
 
-            row = 0
-            for opt in SCHEMA[self.page_key]:
-                if self.page_key != "appearance" and opt.key in HIDDEN_OPTION_KEYS:
+            for opt in opts:
+                if opt.key in HIDDEN_OPTION_KEYS:
                     continue
                 if needle and not title_match and not self._matches(opt, needle):
                     continue
-                shown += 1
-                # Start a new titled frame whenever the section changes.
+                # Start a new titled card whenever the section changes.
                 if opt.group != current_group:
-                    finish_frame()
-                    if opt.group:
-                        head = Gtk.Label(xalign=0)
-                        head.set_markup("<b>%s</b>" %
-                                        GLib.markup_escape_text(opt.group))
-                        self.content.pack_start(head, False, False, 2)
-                    grid = Gtk.Grid(column_spacing=12, row_spacing=8)
-                    grid.set_margin_top(2)
+                    body = self.add_card(opt.group)
+                    listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+                    listbox.get_style_context().add_class("ms-rows")
+                    body.pack_start(listbox, False, False, 0)
                     current_group = opt.group
-                    row = 0
-                label = Gtk.Label(xalign=0)
-                self._decorate_label(label, opt)
-                self.row_labels[opt.key] = label
-                grid.attach(label, 0, row, 1, 1)
-                widget = self._make_widget(opt)
-                self.widgets[opt.key] = (opt, widget)
-                grid.attach(widget, 1, row, 1, 1)
-                reset = Gtk.Button.new_from_icon_name("edit-undo",
-                                                     Gtk.IconSize.BUTTON)
-                reset.set_relief(Gtk.ReliefStyle.NONE)
-                reset.set_tooltip_text("Reset to MangoWM default (%s)" % opt.default)
-                reset.set_sensitive(self.app.config.get(opt.key) is not None)
-                reset.connect("clicked", self.on_reset, opt)
-                grid.attach(reset, 2, row, 1, 1)
-                if opt.desc:
-                    note = Gtk.Label(xalign=0)
-                    note.set_markup("<small>%s</small>" % GLib.markup_escape_text(opt.desc))
-                    note.get_style_context().add_class("dim-label")
-                    grid.attach(note, 3, row, 1, 1)
-                row += 1
-            finish_frame()
+                listbox.add(self._make_row(opt))
             if not self.widgets:
                 self.add_note("Nothing to configure here.")
             self.show_all()
@@ -1686,26 +1967,77 @@ def run_gui(args):
         def _matches(opt, needle):
             return option_matches(opt, needle)
 
+        def _make_row(self, opt):
+            """One web-style settings row: label + description on the left,
+            control on the right, hover-visible reset button."""
+            row = Gtk.ListBoxRow()
+            row.get_style_context().add_class("ms-row")
+            row.set_activatable(False)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            row.add(box)
+
+            # Left: label + muted description.
+            left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label = Gtk.Label(xalign=0, hexpand=True, ellipsize=3)
+            self._decorate_label(label, opt)
+            label.get_style_context().add_class("ms-row-label")
+            left.pack_start(label, False, False, 0)
+            if opt.desc:
+                desc = Gtk.Label(xalign=0)
+                desc.set_markup("<span size='small' alpha='70%%'>%s</span>"
+                                % GLib.markup_escape_text(opt.desc))
+                desc.get_style_context().add_class("ms-row-desc")
+                desc.set_line_wrap(True)
+                left.pack_start(desc, False, False, 0)
+            box.pack_start(left, True, True, 0)
+            self.row_labels[opt.key] = label
+
+            # Right: control + reset.
+            right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                            valign=Gtk.Align.CENTER)
+            widget = self._make_widget(opt)
+            self.widgets[opt.key] = (opt, widget)
+            right.pack_start(widget, False, False, 0)
+            reset = Gtk.Button.new_from_icon_name(
+                "edit-undo-symbolic", Gtk.IconSize.MENU)
+            reset.set_relief(Gtk.ReliefStyle.NONE)
+            reset.get_style_context().add_class("ms-reset")
+            reset.set_tooltip_text("Reset to MangoWM default (%s)" % opt.default)
+            reset.set_sensitive(self.app.config.get(opt.key) is not None)
+            reset.connect("clicked", self.on_reset, opt)
+            right.pack_start(reset, False, False, 0)
+            box.pack_end(right, False, False, 0)
+            return row
+
         def _decorate_label(self, label, opt):
             """Bold = explicitly set in the config; plain = MangoWM default."""
             entries = self.app.config.values.get(opt.key)
             title = GLib.markup_escape_text(opt.label)
             if entries:
                 doc, line, _value = entries[-1]
-                label.set_markup("<b>%s</b>" % title)
+                label.set_markup(title)
+                label.get_style_context().add_class("set-in-config")
                 label.set_tooltip_text("Set in %s%s" % (
                     os.path.basename(doc.path),
                     (" line %d" % (doc.lines.index(line) + 1))
                     if line in doc.lines else ""))
             else:
                 label.set_text(opt.label)
+                label.get_style_context().remove_class("set-in-config")
                 label.set_tooltip_text("Not in your config \u2014 using MangoWM's "
                                        "default: %s" % opt.default)
 
         def on_reset(self, _btn, opt):
-            if self.app.config.unset(opt.key):
-                self.mark_changed()
-                self.rebuild()
+            old = self.app.config.get(opt.key)
+            if not self.app.config.unset(opt.key):
+                return
+            self.mark_changed()
+            self.rebuild()
+            self.app.record_config_undo(opt.key, old)
 
         def _current(self, opt):
             val = self.app.config.get(opt.key)
@@ -1715,21 +2047,58 @@ def run_gui(args):
 
         def _make_widget(self, opt):
             if opt.type == OptDef.BOOL:
-                w = Gtk.Switch(halign=Gtk.Align.START)
-                w.set_active((self._current(opt) or "0") == "1")
-                w.connect("notify::active", self._on_bool, opt)
-                return w
+                # Web-style toggle with an On/Off text indicator.
+                wrap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                state = Gtk.Label()
+                active = (self._current(opt) or "0") == "1"
+                state.set_text("On" if active else "Off")
+                state.get_style_context().add_class(
+                    "ms-state-on" if active else "ms-state-off")
+                wrap.pack_start(state, False, False, 0)
+                w = Gtk.Switch(valign=Gtk.Align.CENTER)
+                w.set_active(active)
+                w.connect("notify::active", self._on_bool, opt, state)
+                wrap.pack_start(w, False, False, 0)
+                return wrap
             if opt.type in (OptDef.INT, OptDef.FLOAT):
-                adj = Gtk.Adjustment(
-                    float(self._current(opt) or opt.default),
-                    float(opt.min if opt.min is not None else 0),
-                    float(opt.max if opt.max is not None else 100000),
-                    1.0 if opt.type == OptDef.INT else 0.05,
-                    10.0, 0)
-                w = Gtk.SpinButton(adjustment=adj,
-                                   digits=0 if opt.type == OptDef.INT else 2)
-                w.connect("value-changed", self._on_number, opt)
-                return w
+                # Web-style slider with a numeric readout.
+                wrap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lo = float(opt.min if opt.min is not None else 0)
+                hi = float(opt.max if opt.max is not None else 100000)
+                cur = float(self._current(opt) or opt.default)
+                step = 1.0 if opt.type == OptDef.INT else max(0.01, (hi - lo) / 100.0)
+                adj = Gtk.Adjustment(cur, lo, hi, step, step * 10, 0)
+                w = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL,
+                              adjustment=adj, draw_value=False, width_request=110)
+                w.set_digits(0 if opt.type == OptDef.INT else 2)
+                readout = Gtk.Label(
+                    label=("%d" % round(cur)) if opt.type == OptDef.INT
+                    else ("%.2f" % cur).rstrip("0").rstrip("."))
+                readout.set_width_chars(5)
+                readout.get_style_context().add_class("ms-readout")
+                wrap.pack_start(w, False, False, 0)
+                wrap.pack_start(readout, False, False, 0)
+
+                def update_readout(_adj):
+                    v = adj.get_value()
+                    readout.set_text(
+                        ("%d" % round(v)) if opt.type == OptDef.INT
+                        else ("%.2f" % v).rstrip("0").rstrip("."))
+
+                def commit(_src):
+                    update_readout(adj)
+                    self._on_number(adj, opt)
+
+                adj.connect("value-changed", update_readout)
+                w.connect("button-release-event",
+                          lambda _s, _e: (commit(None), False)[1])
+                w.connect("key-press-event", lambda _s, e:
+                          (commit(None), False)[1]
+                          if e.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter)
+                          else False)
+                w.connect("scroll-event", lambda _s, _e:
+                          (GLib.timeout_add(400, commit, None), False)[1])
+                return wrap
             if opt.type == OptDef.CHOICE:
                 w = Gtk.ComboBoxText()
                 for c in opt.choices:
@@ -1740,31 +2109,70 @@ def run_gui(args):
                 w.set_active(opt.choices.index(cur) if cur in opt.choices else 0)
                 w.connect("changed", self._on_choice, opt)
                 return w
-            w = Gtk.Entry(width_chars=24, hexpand=True)
+            if opt.type == OptDef.COLOR:
+                wrap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                cur = self._current(opt) or ""
+                w = Gtk.Entry(width_chars=10)
+                w.set_text(cur)
+                w.connect("changed", self._on_text, opt)
+                wrap.pack_start(w, False, False, 0)
+                picker = Gtk.ColorButton()
+                picker.set_tooltip_text("Pick a color (saved as 0xRRGGBBAA)")
+                parsed = _parse_mango_color(cur)
+                if parsed is not None:
+                    rgba = Gdk.RGBA()
+                    rgba.red, rgba.green, rgba.blue, rgba.alpha = parsed
+                    picker.set_rgba(rgba)
+                picker.connect("color-set", self._on_color_pick, opt, w)
+                wrap.pack_start(picker, False, False, 0)
+                return wrap
+            w = Gtk.Entry(width_chars=16)
             w.set_text(self._current(opt) or "")
             w.connect("changed", self._on_text, opt)
             return w
 
         def _apply(self, opt, value):
             try:
+                old = self.app.config.get(opt.key)
                 self.app.config.set(opt.key, value)
                 self.mark_changed()
+                self.app.record_config_undo(opt.key, old)
+                # Keep the "set in file" marker in sync.
+                label = self.row_labels.get(opt.key)
+                if label is not None:
+                    self._decorate_label(label, opt)
             except ConfigError as exc:
                 self.app.error_dialog(str(exc))
 
-        def _on_bool(self, sw, _pspec, opt):
-            self._apply(opt, "1" if sw.get_active() else "0")
+        def _on_bool(self, sw, _pspec, opt, state):
+            active = sw.get_active()
+            state.set_text("On" if active else "Off")
+            ctx = state.get_style_context()
+            ctx.remove_class("ms-state-on")
+            ctx.remove_class("ms-state-off")
+            ctx.add_class("ms-state-on" if active else "ms-state-off")
+            self._apply(opt, "1" if active else "0")
 
-        def _on_number(self, spin, opt):
+        def _on_number(self, adj, opt):
+            v = adj.get_value()
             if opt.type == OptDef.INT:
-                self._apply(opt, str(int(spin.get_value())))
+                self._apply(opt, str(int(round(v))))
             else:
-                self._apply(opt, ("%f" % spin.get_value()).rstrip("0").rstrip("."))
+                self._apply(opt, ("%f" % v).rstrip("0").rstrip("."))
 
         def _on_choice(self, combo, opt):
             text = combo.get_active_text()
             if text:
                 self._apply(opt, text)
+
+        def _on_color_pick(self, button, opt, entry):
+            if opt is None:
+                return
+            text = _mango_color_from_rgba(button.get_rgba())
+            entry.handler_block_by_func(self._on_text)
+            entry.set_text(text)
+            entry.handler_unblock_by_func(self._on_text)
+            self._apply(opt, text)
 
         def _on_text(self, entry, opt):
             self._apply(opt, entry.get_text())
@@ -2057,6 +2465,532 @@ def run_gui(args):
         def on_delete(self, _btn, index):
             self.app.rule_file("bind").remove(index)
             self.after_change()
+
+    class RuleListPage(PageBase):
+        """Editor for a RuleFile: list of records with add/edit/delete,
+        shown as rows inside a web-style card with a terminal-style add row."""
+
+        record_name = None
+
+        def __init__(self, app):
+            super().__init__(app)
+
+        def rules(self):
+            return self.app.rule_file(self.rule_file_attr()).records(self.record_name)
+
+        def build(self):
+            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+            self.listbox.get_style_context().add_class("ms-rows")
+            body = self.add_card(self.card_title())
+            body.pack_start(self.listbox, False, False, 0)
+            body.pack_start(self.make_add_row(), False, False, 4)
+            self.rebuild()
+
+        def card_title(self):
+            return self.record_name
+
+        def placeholder(self):
+            return ""
+
+        def make_add_row(self):
+            """Terminal-style input row: $ [entry] [Add]."""
+            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            bar.get_style_context().add_class("ms-add-row")
+            prompt = Gtk.Label(label="$")
+            prompt.get_style_context().add_class("ms-prompt")
+            bar.pack_start(prompt, False, False, 0)
+            self.add_entry = Gtk.Entry(hexpand=True)
+            self.add_entry.set_placeholder_text(self.placeholder())
+            self.add_entry.connect("activate", self.on_entry_activate)
+            bar.pack_start(self.add_entry, True, True, 0)
+            add = Gtk.Button.new_from_icon_name("list-add-symbolic",
+                                                Gtk.IconSize.BUTTON)
+            add.set_tooltip_text("Add %s" % self.record_name)
+            add.get_style_context().add_class("ms-add-button")
+            add.connect("clicked", self.on_entry_activate)
+            bar.pack_start(add, False, False, 0)
+            return bar
+
+        def on_entry_activate(self, _widget, *_a):
+            self.add_from_entry()
+
+        def add_from_entry(self):
+            """Turn the add row's text into a new record; subclasses decide."""
+            raise NotImplementedError
+
+        def rule_file_attr(self):
+            raise NotImplementedError
+
+        def field_labels(self):
+            raise NotImplementedError
+
+        def edit_dialog(self, fields=None, on_ok=None):
+            dlg = Gtk.Dialog(title=self.record_name.capitalize(),
+                             transient_for=self.get_toplevel(), modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                            "_Save", Gtk.ResponseType.OK)
+            grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+            grid.set_border_width(12)
+            entries = []
+            labels = self.field_labels()
+            for i, label in enumerate(labels):
+                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
+                entry = Gtk.Entry(width_chars=32)
+                entry.set_text(fields[i] if fields and i < len(fields) else "")
+                grid.attach(entry, 1, i, 1, 1)
+                entries.append(entry)
+            dlg.get_content_area().add(grid)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK:
+                values = [e.get_text().strip() for e in entries]
+                dlg.destroy()
+                on_ok(values)
+                return True
+            dlg.destroy()
+            return False
+
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            records = self.rules()
+            conflicts = dict(RuleFile.bind_conflicts(records)
+                             if self.record_name == "bind" else [])
+            for index, fields in records:
+                row = Gtk.ListBoxRow()
+                row.get_style_context().add_class("ms-row")
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                box.set_margin_start(10)
+                box.set_margin_end(10)
+                box.set_margin_top(6)
+                box.set_margin_bottom(6)
+                text = ", ".join(fields)[:96]
+                label = Gtk.Label(label=text, xalign=0, hexpand=True, ellipsize=3)
+                label.get_style_context().add_class("ms-row-label")
+                box.pack_start(label, True, True, 8)
+                if index in conflicts:
+                    warn = Gtk.Label()
+                    warn.set_markup("<span foreground='orange'>\u26a0 %s</span>"
+                                    % GLib.markup_escape_text(conflicts[index]))
+                    box.pack_start(warn, False, False, 4)
+                edit = Gtk.Button.new_from_icon_name("document-edit-symbolic",
+                                                     Gtk.IconSize.MENU)
+                edit.set_relief(Gtk.ReliefStyle.NONE)
+                edit.set_tooltip_text("Edit")
+                edit.connect("clicked", self.on_edit, index)
+                box.pack_start(edit, False, False, 2)
+                delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
+                                                       Gtk.IconSize.MENU)
+                delete.set_relief(Gtk.ReliefStyle.NONE)
+                delete.get_style_context().add_class("destructive-action")
+                delete.set_tooltip_text("Delete")
+                delete.connect("clicked", self.on_delete, index)
+                box.pack_start(delete, False, False, 2)
+                row.add(box)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            if not records:
+                self.add_note("No %s entries yet." % self.record_name)
+
+        def after_change(self):
+            self.app.rule_file(self.rule_file_attr()).save()
+            self.clear_dirty()
+            self.rebuild()
+
+        def on_add(self, _btn):
+            self.edit_dialog(on_ok=self._added)
+
+        def _added(self, values):
+            self.app.rule_file(self.rule_file_attr()).add(self.record_name, values)
+            self.after_change()
+
+        def on_edit(self, _btn, index):
+            fields = self.app.rule_file(self.rule_file_attr()).raw_lines[index][1][1]
+            self.edit_dialog(fields=list(fields),
+                             on_ok=lambda v: self._edited(index, v))
+
+        def _edited(self, index, values):
+            self.app.rule_file(self.rule_file_attr()).update(index, values)
+            self.after_change()
+
+        def on_delete(self, _btn, index):
+            self.app.rule_file(self.rule_file_attr()).remove(index)
+            self.after_change()
+
+    class KeybindsPage(RuleListPage):
+        page_key = "bindings"
+        record_name = "bind"
+
+        def rule_file_attr(self):
+            return "bind"
+
+        def field_labels(self):
+            return ["Modifiers (SUPER, SHIFT\u2026)", "Key", "Action", "Arguments"]
+
+        def placeholder(self):
+            return "e.g. SUPER, Return, spawn, foot"
+
+        def add_from_entry(self):
+            text = self.add_entry.get_text().strip()
+            if not text:
+                return
+            parts = [p.strip() for p in text.split(",") if p.strip()]
+            if len(parts) < 3:
+                self.app.error_dialog("Need at least modifiers, key and action, "
+                                      "separated by commas:\n"
+                                      "SUPER, Return, spawn, foot")
+                return
+            while len(parts) < 4:
+                parts.append("")
+            self.add_entry.set_text("")
+            self._added(parts)
+
+        def build(self):
+            super().build()
+            self.add_note("Separate fields with commas: modifiers, key, action, "
+                          "arguments. Conflicting binds (same modifiers and key) "
+                          "are flagged. Ctrl+R sends the reload to MangoWM.")
+
+    class WindowRulesPage(RuleListPage):
+        page_key = "window-rules"
+        record_name = "window_rule"
+
+        def rule_file_attr(self):
+            return "rule"
+
+        def field_labels(self):
+            return ["Window class", "Title", "Tags", "Float (0/1)", "Monitor"]
+
+        def placeholder(self):
+            return "e.g. foot, , 2, 1, 0"
+
+        def add_from_entry(self):
+            text = self.add_entry.get_text().strip()
+            if not text:
+                return
+            parts = [p.strip() for p in text.split(",") if p.strip()]
+            while len(parts) < 5:
+                parts.append("")
+            self.add_entry.set_text("")
+            self._added(parts)
+
+        def build(self):
+            super().build()
+            btn_once = Gtk.Button(label="Add window_rule_once")
+            btn_once.get_style_context().add_class("ms-secondary-button")
+            btn_once.connect("clicked", self.on_add_once)
+            self.content.pack_start(btn_once, False, False, 2)
+
+        def on_add_once(self, _btn):
+            self.edit_dialog(on_ok=self._added_once)
+
+        def _added_once(self, values):
+            self.app.rule_file("rule").add("window_rule_once", values)
+            self.after_change()
+
+    class MonitorsPage(RuleListPage):
+        page_key = "monitor-rules"
+        record_name = "monitor"
+
+        def rule_file_attr(self):
+            return "monitor"
+
+        def field_labels(self):
+            return ["Name", "Enabled (0/1)", "X", "Y", "Width", "Height",
+                    "Scale", "Refresh", "Transform"]
+
+        def placeholder(self):
+            return "e.g. eDP-1"
+
+        def add_from_entry(self):
+            name = self.add_entry.get_text().strip()
+            if not name:
+                return
+            self.add_entry.set_text("")
+            self._added([name, "1", "0", "0", "-1", "-1", "1", "0", "normal"])
+
+        def build(self):
+            super().build()
+            self.detect_btn = Gtk.Button(label="Add connected displays (mmsg)")
+            self.detect_btn.get_style_context().add_class("ms-secondary-button")
+            self.detect_btn.connect("clicked", self.on_detect)
+            self.content.pack_start(self.detect_btn, False, False, 2)
+            if not mmsg_available():
+                self.add_note("mmsg not found \u2014 'Add connected displays' needs "
+                              "MangoWM's mmsg. You can still add monitors manually.")
+
+        def on_detect(self, _btn):
+            monitors = connected_monitors()
+            if not monitors:
+                self.app.error_dialog("mmsg reported no connected displays "
+                                      "(or mmsg is not installed).")
+                return
+            rf = self.app.rule_file("monitor")
+            for name, _desc in monitors:
+                if not any(rec[1] and rec[1][0] == name for rec in rf.records("monitor")):
+                    rf.add("monitor", [name, "1", "0", "0", "-1", "-1", "1", "0", "normal"])
+            self.after_change()
+
+    class TagRulesPage(RuleListPage):
+        page_key = "tag-rules"
+        record_name = "tag_rule"
+
+        def rule_file_attr(self):
+            return "rule"
+
+        def field_labels(self):
+            return ["Tag ID (0 = special, * = all)",
+                    "Layout (tile, scroller, monocle, deck\u2026)",
+                    "Monitor name (optional)"]
+
+        def placeholder(self):
+            return "e.g. 1, scroller"
+
+        def add_from_entry(self):
+            text = self.add_entry.get_text().strip()
+            if not text:
+                return
+            parts = [p.strip() for p in text.split(",") if p.strip()]
+            while len(parts) < 3:
+                parts.append("")
+            self.add_entry.set_text("")
+            self._added(parts)
+
+    class LayerRulesPage(RuleListPage):
+        page_key = "layer-rules"
+        record_name = "layer_rule"
+
+        def rule_file_attr(self):
+            return "rule"
+
+        def field_labels(self):
+            return ["Layer name (regex)", "Open anim (fade/slide/zoom/none)",
+                    "Close anim (fade/slide/zoom/none)"]
+
+        def placeholder(self):
+            return "e.g. rofi, slide, fade"
+
+        def add_from_entry(self):
+            text = self.add_entry.get_text().strip()
+            if not text:
+                return
+            parts = [p.strip() for p in text.split(",") if p.strip()]
+            while len(parts) < 3:
+                parts.append("")
+            self.add_entry.set_text("")
+            self._added(parts)
+
+    class AutostartPage(PageBase):
+        """exec_once / exec editors, one card each (like the web settings)."""
+
+        page_key = "autostart"
+
+        CARDS = [("exec_once", "Run once per session",
+                  "Commands that run only when mangowm starts \u2014 not on reload.",
+                  "e.g., waybar &"),
+                 ("exec", "Run on every start and reload",
+                  "Commands that run again whenever the config is reloaded.",
+                  "e.g., swaybg -i ~/wallpaper.png")]
+
+        def build(self):
+            self.lists = {}
+            self.entries = {}
+            for key, title, _desc, placeholder in self.CARDS:
+                body = self.add_card(key)
+                listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+                listbox.get_style_context().add_class("ms-rows")
+                body.pack_start(listbox, False, False, 0)
+                self.lists[key] = listbox
+                bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                bar.set_border_width(6)
+                prompt = Gtk.Label(label="$")
+                prompt.get_style_context().add_class("ms-prompt")
+                bar.pack_start(prompt, False, False, 0)
+                entry = Gtk.Entry(hexpand=True)
+                entry.set_placeholder_text(placeholder)
+                entry.connect("activate", self.on_entry_activate, key)
+                bar.pack_start(entry, True, True, 0)
+                add = Gtk.Button(label="Add")
+                add.get_style_context().add_class("ms-add-button")
+                add.connect("clicked", self.on_entry_activate, key)
+                bar.pack_start(add, False, False, 0)
+                body.pack_start(bar, False, False, 2)
+                self.entries[key] = entry
+            self.rebuild()
+
+        def rules(self):
+            out = []
+            for key in ("exec_once", "exec"):
+                for value in self.app.config.get_all(key):
+                    out.append((key, value))
+            return out
+
+        def rebuild(self):
+            entries = self.rules()
+            for key, listbox in self.lists.items():
+                for child in listbox.get_children():
+                    listbox.remove(child)
+            for i, (key, value) in enumerate(entries):
+                listbox = self.lists[key]
+                row = Gtk.ListBoxRow()
+                row.get_style_context().add_class("ms-row")
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                box.set_margin_start(10)
+                box.set_margin_end(10)
+                box.set_margin_top(6)
+                box.set_margin_bottom(6)
+                label = Gtk.Label(label=value[:90], xalign=0, hexpand=True,
+                                  ellipsize=3)
+                label.get_style_context().add_class("ms-row-label")
+                box.pack_start(label, True, True, 8)
+                delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
+                                                       Gtk.IconSize.MENU)
+                delete.set_relief(Gtk.ReliefStyle.NONE)
+                delete.get_style_context().add_class("destructive-action")
+                delete.set_tooltip_text("Delete")
+                delete.connect("clicked", self.on_delete, i)
+                box.pack_start(delete, False, False, 2)
+                row.add(box)
+                listbox.add(row)
+                listbox.show_all()
+            if not entries:
+                self.add_note("No startup commands yet.")
+
+        def on_entry_activate(self, _widget, key):
+            entry = self.entries[key]
+            text = entry.get_text().strip()
+            if not text:
+                return
+            old = list(self.app.config.get_all(key))
+            try:
+                self.app.config.add_value(key, text)
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
+                return
+            entry.set_text("")
+            self.rebuild()
+            self.app.record_multi_undo(key, old, list(self.app.config.get_all(key)))
+            # Startup commands apply on save; keep the file written immediately.
+            self.app.config.save()
+            self.clear_dirty()
+
+        def on_delete(self, _btn, index):
+            key, _value = self.rules()[index]
+            all_key = self.app.config.get_all(key)
+            old = list(all_key)
+            sub = index if key == "exec_once" else index - len(
+                self.app.config.get_all("exec_once"))
+            try:
+                self.app.config.remove_value(key, sub)
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
+                return
+            self.rebuild()
+            self.app.record_multi_undo(key, old, list(self.app.config.get_all(key)))
+            self.app.config.save()
+            self.clear_dirty()
+
+    class EnvPage(PageBase):
+        """Editor for ``env = KEY, value`` records in config.conf."""
+
+        page_key = "environment"
+
+        def build(self):
+            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.listbox.get_style_context().add_class("ms-rows")
+            body = self.add_card("env")
+            body.pack_start(self.listbox, False, False, 0)
+            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            bar.set_border_width(6)
+            prompt = Gtk.Label(label="$")
+            prompt.get_style_context().add_class("ms-prompt")
+            bar.pack_start(prompt, False, False, 0)
+            self.entry = Gtk.Entry(hexpand=True)
+            self.entry.set_placeholder_text("e.g., XCURSOR_SIZE, 24  (or NAME=value)")
+            self.entry.connect("activate", self.on_entry_activate)
+            bar.pack_start(self.entry, True, True, 0)
+            add = Gtk.Button(label="Add")
+            add.get_style_context().add_class("ms-add-button")
+            add.connect("clicked", self.on_entry_activate)
+            bar.pack_start(add, False, False, 0)
+            body.pack_start(bar, False, False, 2)
+            self.rebuild()
+
+        def split_value(self, raw):
+            """'KEY, value' (or 'KEY=value') -> [KEY, value]."""
+            raw = raw.strip()
+            if "=" in raw and "," not in raw.split("=")[0]:
+                name, _, val = raw.partition("=")
+                return [name.strip(), val.strip()]
+            parts = [p.strip() for p in raw.split(",")]
+            if len(parts) == 1:
+                return [parts[0], ""]
+            return [parts[0], ", ".join(parts[1:])]
+
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            values = self.app.config.get_all("env")
+            for i, value in enumerate(values):
+                name, val = self.split_value(value)
+                row = Gtk.ListBoxRow()
+                row.get_style_context().add_class("ms-row")
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                box.set_margin_start(10)
+                box.set_margin_end(10)
+                box.set_margin_top(6)
+                box.set_margin_bottom(6)
+                name_label = Gtk.Label(label=name, xalign=0)
+                name_label.get_style_context().add_class("ms-row-label")
+                box.pack_start(name_label, False, False, 0)
+                val_label = Gtk.Label(label=val, xalign=0, hexpand=True, ellipsize=3)
+                val_label.get_style_context().add_class("ms-row-desc")
+                box.pack_start(val_label, True, True, 8)
+                delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
+                                                       Gtk.IconSize.MENU)
+                delete.set_relief(Gtk.ReliefStyle.NONE)
+                delete.get_style_context().add_class("destructive-action")
+                delete.set_tooltip_text("Delete")
+                delete.connect("clicked", self.on_delete, i)
+                box.pack_start(delete, False, False, 2)
+                row.add(box)
+                self.listbox.add(row)
+            self.listbox.show_all()
+            if not values:
+                self.add_note("No environment variables set.")
+
+        def on_entry_activate(self, _widget, *_a):
+            text = self.entry.get_text().strip()
+            if not text:
+                return
+            name, val = self.split_value(text)
+            if not name:
+                self.app.error_dialog("Need a variable name first.")
+                return
+            value = "%s, %s" % (name, val) if val else name
+            old = list(self.app.config.get_all("env"))
+            try:
+                self.app.config.add_value("env", value)
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
+                return
+            self.entry.set_text("")
+            self.rebuild()
+            self.app.record_multi_undo("env", old, list(self.app.config.get_all("env")))
+            self.app.config.save()
+            self.clear_dirty()
+
+        def on_delete(self, _btn, index):
+            old = list(self.app.config.get_all("env"))
+            try:
+                self.app.config.remove_value("env", index)
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
+                return
+            self.rebuild()
+            self.app.record_multi_undo("env", old, list(self.app.config.get_all("env")))
+            self.app.config.save()
+            self.clear_dirty()
 
     class ConfigFilesPage(PageBase):
         page_key = "files"
@@ -2368,28 +3302,24 @@ def run_gui(args):
 
     # ---------------------------------------------------------------- window
     class SettingsWindow(Gtk.ApplicationWindow):
-        PANES = ["appearance", "animations", "behavior", "layouts", "keybindings",
-                 "workspaces", "windowrules", "monitors", "input", "startup",
-                 "theming", "background", "notifications", "files", "system"]
+        """Chromeless window: a slim header bar (web-style) above a sidebar +
+        content split.  Dragging the header moves the window."""
 
         def __init__(self, app):
             try:
-                width = int(app.read_ui_pref("width", 980))
-                height = int(app.read_ui_pref("height", 680))
+                width = int(app.read_ui_pref("width", 1020))
+                height = int(app.read_ui_pref("height", 700))
             except (TypeError, ValueError):
-                width, height = 980, 680
+                width, height = 1020, 700
             # Clamp junk from older versions (a destroyed window reports 1x1).
-            width = width if 480 <= width <= 6000 else 980
-            height = height if 320 <= height <= 4000 else 680
+            width = width if 480 <= width <= 6000 else 1020
+            height = height if 320 <= height <= 4000 else 700
             super().__init__(application=app.gtk_app,
                              title=APP_NAME, default_width=width,
                              default_height=height)
             self.app = app
             self.translucent = False
             # --- translucent surface (MangoWM blurs what is behind it) -------
-            # A transparent toplevel plus semi-transparent CSS lets the
-            # compositor's blur (blur=1 in config.conf) show through.  On a
-            # screen without a compositor we stay fully opaque.
             try:
                 screen = self.get_screen()
                 visual = screen.get_rgba_visual()
@@ -2403,136 +3333,294 @@ def run_gui(args):
             self.surface = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             self.surface.get_style_context().add_class("app-surface")
             self.add(self.surface)
-            self.paned = Gtk.Paned()
-            self.surface.add(self.paned)
-            # Remember the window size for next launch (validated in
-            # on_size_allocate / on_destroy).
             self._last_size = (width, height)
             self._last_pos = 0
             self.connect("size-allocate", self.on_size_allocate)
             self.connect("destroy", self.on_destroy)
 
-            # No title bar: all window controls live in the sidebar instead.
-            # The compositor keeps the window title (taskbar/mangobar) but the
-            # app itself draws no header bar.
+            # -- header bar ----------------------------------------------------
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            header.get_style_context().add_class("ms-header")
+            header.set_margin_start(8)
+            header.set_margin_end(8)
+            header.set_margin_top(6)
+            header.set_margin_bottom(2)
+            # Window dragging: press anywhere on the header to move.
+            header.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            header.connect("button-press-event", self.on_header_press)
+            self.header_box = header
+
+            self.sidebar_toggle = Gtk.Button.new_from_icon_name(
+                "open-menu-symbolic", Gtk.IconSize.BUTTON)
+            self._sidebar_icon_alternatives()
+            self.sidebar_toggle.set_relief(Gtk.ReliefStyle.NONE)
+            self.sidebar_toggle.set_tooltip_text("Toggle sidebar")
+            self.sidebar_toggle.connect("clicked", self.on_toggle_sidebar)
+            header.pack_start(self.sidebar_toggle, False, False, 2)
+
+            sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+            header.pack_start(sep, False, False, 4)
+
+            self.title_label = Gtk.Label(label=PAGE_TITLES[PAGE_ORDER[0]], xalign=0)
+            self.title_label.get_style_context().add_class("ms-header-title")
+            header.pack_start(self.title_label, False, False, 2)
+
+            # Centered search pill (Ctrl+K / Ctrl+F both focus it).
+            self.search = Gtk.SearchEntry(placeholder_text="Search settings\u2026")
+            self.search.set_width_chars(26)
+            self.search.get_style_context().add_class("ms-search")
+            self.search.set_halign(Gtk.Align.CENTER)
+            self.search.set_valign(Gtk.Align.CENTER)
+            self.search.connect("search-changed", self.on_search)
+            self.search.connect("stop-search", lambda e: e.set_text(""))
+            center = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            center.pack_start(self.search, True, True, 0)
+            header.pack_start(center, True, True, 0)
+            self.search.set_tooltip_text("Search settings (Ctrl+K or Ctrl+F)")
+
+            # Right: quit is outermost, then save/reload/history/setup/files
+            # (web-settings order, left to right).
+            close_btn = Gtk.Button.new_from_icon_name("window-close-symbolic",
+                                                      Gtk.IconSize.BUTTON)
+            close_btn.set_relief(Gtk.ReliefStyle.NONE)
+            close_btn.set_tooltip_text("Quit (Ctrl+Q)")
+            close_btn.connect("clicked", lambda *_: app.action_quit())
+            header.pack_end(close_btn, False, False, 2)
+
+            self.save_btn = Gtk.Button()
+            self._save_icon = Gtk.Image.new_from_icon_name(
+                "document-save-symbolic", Gtk.IconSize.BUTTON)
+            self.save_btn.set_image(self._save_icon)
+            self.save_btn.set_relief(Gtk.ReliefStyle.NONE)
+            self.save_btn.set_tooltip_text("Save all changed pages (Ctrl+S)")
+            self.save_btn.connect("clicked", lambda *_: app.action_save())
+            header.pack_end(self.save_btn, False, False, 2)
+
+            reload_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic",
+                                                       Gtk.IconSize.BUTTON)
+            reload_btn.set_relief(Gtk.ReliefStyle.NONE)
+            reload_btn.set_tooltip_text("Reload MangoWM (Ctrl+R)")
+            reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
+            header.pack_end(reload_btn, False, False, 2)
+
+            self.redo_btn = Gtk.Button.new_from_icon_name("edit-redo-symbolic",
+                                                          Gtk.IconSize.BUTTON)
+            self.redo_btn.set_relief(Gtk.ReliefStyle.NONE)
+            self.redo_btn.set_tooltip_text("Redo (Ctrl+Shift+Z)")
+            self.redo_btn.connect("clicked", lambda *_: app.action_redo())
+            header.pack_end(self.redo_btn, False, False, 2)
+
+            self.undo_btn = Gtk.Button.new_from_icon_name("edit-undo-symbolic",
+                                                          Gtk.IconSize.BUTTON)
+            self.undo_btn.set_relief(Gtk.ReliefStyle.NONE)
+            self.undo_btn.set_tooltip_text("Undo (Ctrl+Z)")
+            self.undo_btn.connect("clicked", lambda *_: app.action_undo())
+            header.pack_end(self.undo_btn, False, False, 2)
+
+            self.setup_btn = self._make_setup_menu(app)
+            header.pack_end(self.setup_btn, False, False, 2)
+
+            files_btn = Gtk.Button.new_from_icon_name("text-x-generic-symbolic",
+                                                      Gtk.IconSize.BUTTON)
+            files_btn.set_relief(Gtk.ReliefStyle.NONE)
+            files_btn.set_tooltip_text("View Config Files")
+            files_btn.connect("clicked", lambda *_: self.goto("files"))
+            header.pack_end(files_btn, False, False, 2)
+
+            self.surface.pack_start(header, False, False, 0)
+
             # -- sidebar -------------------------------------------------------
-            side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.paned = Gtk.Paned()
+            self.surface.pack_start(self.paned, True, True, 0)
+            side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             side.set_border_width(8)
             side.get_style_context().add_class("app-sidebar")
 
-            self.search = Gtk.SearchEntry(placeholder_text="Search settings… (Ctrl+F)")
-            self.search.connect("search-changed", self.on_search)
-            # Esc clears the search and restores the full page.
-            self.search.connect("stop-search", lambda e: e.set_text(""))
-            side.pack_start(self.search, False, False, 2)
+            # Brand row, like the web sidebar's logo header.
+            brand = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            brand.set_margin_start(4)
+            brand.set_margin_bottom(4)
+            icon = Gtk.Image.new_from_icon_name("mangowm", Gtk.IconSize.DND)
+            if Gtk.IconTheme.get_default().lookup_icon("mangowm", 24, 0) is None:
+                icon = Gtk.Image.new_from_icon_name("applications-graphics",
+                                                    Gtk.IconSize.DND)
+            brand.pack_start(icon, False, False, 0)
+            brand_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            name = Gtk.Label(xalign=0)
+            name.set_markup("<b>mango settings</b>")
+            name.get_style_context().add_class("ms-brand-name")
+            brand_box.pack_start(name, False, False, 0)
+            version = Gtk.Label(xalign=0)
+            version.set_markup(
+                "<small>compositor %s</small>" % GLib.markup_escape_text(
+                    mango_version() or "unknown"))
+            version.get_style_context().add_class("ms-brand-version")
+            brand_box.pack_start(version, False, False, 0)
+            brand.pack_start(brand_box, True, True, 0)
+            side.pack_start(brand, False, False, 0)
 
-            theme_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self.sidebar = Gtk.ListBox()
+            self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self.sidebar.get_style_context().add_class("ms-nav")
+            self.sidebar.connect("row-selected", self.on_row_selected)
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.add(self.sidebar)
+            side.pack_start(scroll, True, True, 0)
+
+            # Footer: theme selector + blur toggle (kept from the old sidebar).
+            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            footer.set_margin_top(4)
             theme_label = Gtk.Label(label="Theme", xalign=0)
+            theme_label.get_style_context().add_class("ms-note")
+            footer.pack_start(theme_label, False, False, 0)
             self.theme_combo = Gtk.ComboBoxText()
             for choice in ("system", "dark", "light"):
                 self.theme_combo.append_text(choice)
             self.theme_combo.set_active(0)
             self.theme_combo.connect("changed", app.on_theme_changed)
-            theme_box.pack_start(theme_label, False, False, 0)
-            theme_box.pack_start(self.theme_combo, True, True, 0)
-            theme_box.pack_start(self._make_blur_check(), False, False, 0)
-            side.pack_start(theme_box, False, False, 2)
-
-            self.sidebar = Gtk.ListBox()
-            self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
-            self.sidebar.connect("row-selected", self.on_row_selected)
-            self.sidebar.get_style_context().add_class("sidebar")
-            side.pack_start(self.sidebar, True, True, 0)
-
-            self.save_btn = Gtk.Button(label="_Save", use_underline=True)
-            self.save_btn.set_tooltip_text("Save all changed pages (Ctrl+S)")
-            self.save_btn.connect("clicked", lambda *_: app.action_save())
-            reload_btn = Gtk.Button(label="Reload Mango")
-            reload_btn.set_tooltip_text("Run 'mmsg dispatch reload_config' (Ctrl+R)")
-            reload_btn.connect("clicked", lambda *_: app.action_reload_mango())
-            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            btns.pack_start(self.save_btn, False, False, 0)
-            btns.pack_start(reload_btn, False, False, 0)
-            spacer = Gtk.Box()               # pushes the close button to the right
-            spacer.set_hexpand(True)
-            btns.pack_start(spacer, True, True, 0)
-            close_btn = Gtk.Button.new_from_icon_name(
-                "window-close-symbolic", Gtk.IconSize.BUTTON)
-            close_btn.set_tooltip_text("Quit (Ctrl+Q)")
-            close_btn.connect("clicked", lambda *_: app.action_quit())
-            btns.pack_end(close_btn, False, False, 0)
-            side.pack_start(btns, False, False, 2)
+            footer.pack_start(self.theme_combo, True, True, 0)
+            footer.pack_start(self._make_blur_check(), False, False, 0)
+            side.pack_start(footer, False, False, 2)
 
             self.paned.add1(side)
             self.paned.set_position(self._sidebar_position(side))
 
-            # stack
+            # content stack
             self.stack = Gtk.Stack()
             self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
             self.paned.add2(self.stack)
+
+            # Sidebar rows: groups (collapsible, chevron) + leaf rows.
             self.page_rows = {}
-            for key in self.PANES:
-                row = Gtk.ListBoxRow()
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                box.set_border_width(6)
-                icon = Gtk.Image.new_from_icon_name(
-                    page_icon(key, 16), Gtk.IconSize.BUTTON)
-                label = Gtk.Label(label=PAGE_TITLES[key], xalign=0)
-                box.pack_start(icon, False, False, 0)
-                box.pack_start(label, True, True, 0)
-                row.add(box)
-                row.set_tooltip_text(PAGE_TITLES[key])
-                self.sidebar.add(row)
-                self.page_rows[key] = row
-            # Restore the last window geometry, then the first/last page.
-            self.sidebar.select_row(self.sidebar.get_children()[0])
-
-        def _sidebar_min_width(self):
-            """Minimum width the sidebar needs so nothing is clipped."""
+            self.group_rows = {}
+            self.group_revealed = set()
             try:
-                return max(180, self.paned.get_child1().get_preferred_width()[0])
+                saved = (app.read_ui_pref("expanded") or "").split(",")
+                self.group_revealed = set(s for s in saved if s in PAGE_TITLES)
             except Exception:
-                return 200
+                self.group_revealed = set()
+            if not self.group_revealed:
+                self.group_revealed = {"appearance"}
+            for key in PAGE_ORDER:
+                parent = PAGE_PARENT[key]
+                if parent is not None and parent not in self.page_rows:
+                    # Guarantee the parent row exists even if NAV_PAGES were
+                    # ever reordered.
+                    self._make_group_row(parent)
+                if PAGE_KIND[key] == "group":
+                    self._make_group_row(key)
+                else:
+                    self._make_leaf_row(key, parent)
+            self._apply_expansion()
+            self.goto("autostart")
 
-        def _sidebar_position(self, side):
-            """Sidebar width that never clips its content.
+        def _sidebar_icon_alternatives(self):
+            """Prefer a panel icon; fall back per icon theme."""
+            theme = Gtk.IconTheme.get_default()
+            for name in ("pan-end-symbolic", "sidebar-show-symbolic",
+                         "emblem-system-symbolic"):
+                if theme.lookup_icon(name, 16, 0) is not None:
+                    self.sidebar_toggle.set_image(
+                        Gtk.Image.new_from_icon_name(name, Gtk.IconSize.BUTTON))
+                    return
 
-            GtkPaned allocates child1 at its minimum width even when the
-            handle sits closer to the edge; the overflow then sticks out to
-            the left and gets clipped.  Keep the position at or above that
-            minimum (and within a sane range).
-            """
-            try:
-                min_width = side.get_preferred_width()[0]
-            except Exception:
-                min_width = 200
-            try:
-                saved = int(self.app.read_ui_pref("sidebar", 0))
-            except (TypeError, ValueError):
-                saved = 0
-            width = saved if saved >= min_width else min_width + 24
-            # Never below the sidebar minimum (that is what clipped it), and
-            # never wider than a sane GNOME-ish sidebar.
-            return max(min_width, min(width, max(420, min_width)))
+        def _make_group_row(self, key):
+            if key in self.group_rows:
+                return
+            row = Gtk.ListBoxRow()
+            row.set_selectable(False)
+            row.get_style_context().add_class("ms-nav-row")
+            row.get_style_context().add_class("ms-nav-group")
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_start(6)
+            box.set_margin_end(6)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            icon = Gtk.Image.new_from_icon_name(
+                page_icon(key, 16), Gtk.IconSize.BUTTON)
+            box.pack_start(icon, False, False, 0)
+            label = Gtk.Label(label=PAGE_TITLES[key], xalign=0, hexpand=True)
+            label.get_style_context().add_class("ms-nav-label")
+            box.pack_start(label, True, True, 0)
+            chevron = Gtk.Image.new_from_icon_name("pan-end-symbolic",
+                                                   Gtk.IconSize.MENU)
+            if Gtk.IconTheme.get_default().lookup_icon("pan-end-symbolic",
+                                                       16, 0) is None:
+                chevron = Gtk.Image.new_from_icon_name("go-next-symbolic",
+                                                       Gtk.IconSize.MENU)
+            chevron.get_style_context().add_class("ms-nav-chevron")
+            box.pack_start(chevron, False, False, 0)
+            row.add(box)
+            row._ms_page = key
+            row._ms_chevron = chevron
+            row.set_selectable(False)
+            row.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            row.connect("button-press-event", self.on_group_pressed, key)
+            self.sidebar.add(row)
+            self.page_rows[key] = row
+            self.group_rows[key] = row
 
-        def on_size_allocate(self, _widget, alloc):
-            """Keep the sidebar visible and track a sane window geometry.
+        def _make_leaf_row(self, key, parent):
+            row = Gtk.ListBoxRow()
+            row.get_style_context().add_class("ms-nav-row")
+            if parent is not None:
+                row.get_style_context().add_class("ms-nav-sub")
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            if parent is None:
+                box.set_margin_start(6)
+            else:
+                box.set_margin_start(28)
+            box.set_margin_end(6)
+            box.set_margin_top(5)
+            box.set_margin_bottom(5)
+            icon = Gtk.Image.new_from_icon_name(
+                page_icon(key, 16), Gtk.IconSize.BUTTON)
+            box.pack_start(icon, False, False, 0)
+            label = Gtk.Label(label=PAGE_TITLES[key], xalign=0, hexpand=True)
+            label.get_style_context().add_class("ms-nav-label")
+            box.pack_start(label, True, True, 0)
+            row.add(box)
+            row._ms_page = key
+            self.sidebar.add(row)
+            self.page_rows[key] = row
 
-            GTK clamps a paned position to the current allocation, so a
-            window that first appears 1px wide (or a stray drag to the edge)
-            would permanently collapse the sidebar to 0.  Re-fit whenever the
-            position is below the sidebar minimum and there is room.
-            """
-            if alloc.width >= 480 and alloc.height >= 320:
-                self._last_size = (alloc.width, alloc.height)
-            min_w = self._sidebar_min_width()
-            pos = self.paned.get_position()
-            if pos >= min_w:
-                self._last_pos = pos
-            elif alloc.width > min_w * 2:
-                new_pos = self._sidebar_position(self.paned.get_child1())
-                if new_pos != pos:
-                    self.paned.set_position(new_pos)
+        def _apply_expansion(self):
+            """Show/hide child rows and rotate the group chevrons."""
+            for key, row in self.page_rows.items():
+                if PAGE_KIND[key] == "group":
+                    expanded = key in self.group_revealed
+                    ctx = row._ms_chevron.get_style_context()
+                    if expanded:
+                        ctx.add_class("ms-open")
+                        ctx.remove_class("ms-closed")
+                    else:
+                        ctx.remove_class("ms-open")
+                        ctx.add_class("ms-closed")
+            self.sidebar.show_all()
+            for key, row in self.page_rows.items():
+                parent = PAGE_PARENT[key]
+                if parent is not None:
+                    row.set_visible(parent in self.group_revealed)
+            self.app.write_ui_pref(expanded=",".join(sorted(self.group_revealed)))
+
+        def _make_setup_menu(self, app):
+            btn = Gtk.MenuButton()
+            btn.set_image(Gtk.Image.new_from_icon_name("emblem-system-symbolic",
+                                                       Gtk.IconSize.BUTTON))
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.set_tooltip_text("Setup")
+            menu = Gtk.Menu.new()
+            for label, handler in (
+                    ("Create default config", lambda *_: app.setup_create_default()),
+                    ("Open config folder", lambda *_: app.setup_open_folder()),
+                    ("Back up config", lambda *_: app.setup_backup())):
+                item = Gtk.MenuItem(label=label)
+                item.connect("activate", handler)
+                menu.append(item)
+            menu.show_all()
+            btn.set_popup(menu)
+            return btn
 
         def _make_blur_check(self):
             """Small "Blur" toggle next to the theme selector."""
@@ -2545,55 +3633,173 @@ def run_gui(args):
             self.blur_check = check
             return check
 
+        def on_header_press(self, widget, event):
+            """Drag the chromeless window from the header; double-click
+            maximizes."""
+            if event.button != 1:
+                return False
+            if event.type == Gdk.EventType._2BUTTON_PRESS:
+                if self.is_maximized():
+                    self.unmaximize()
+                else:
+                    self.maximize()
+                return True
+            if event.window == self.get_window():
+                self.begin_move_drag(event.button, int(event.x_root),
+                                     int(event.y_root), event.time)
+            return True
+
+        def on_toggle_sidebar(self, _btn):
+            child = self.paned.get_child1()
+            if child is None:
+                return
+            hidden = not child.get_visible()
+            child.set_visible(hidden)
+            self.paned.set_position(
+                self._sidebar_position(child) if hidden else 0)
+
+        def _sidebar_min_width(self):
+            """Minimum width the sidebar needs so nothing is clipped."""
+            try:
+                return max(180, self.paned.get_child1().get_preferred_width()[0])
+            except Exception:
+                return 200
+
+        def _sidebar_position(self, side):
+            """Sidebar width that never clips its content."""
+            try:
+                min_width = side.get_preferred_width()[0]
+            except Exception:
+                min_width = 200
+            try:
+                saved = int(self.app.read_ui_pref("sidebar", 0))
+            except (TypeError, ValueError):
+                saved = 0
+            width = saved if saved >= min_width else min_width + 24
+            return max(min_width, min(width, max(420, min_width)))
+
+        def on_size_allocate(self, _widget, alloc):
+            """Keep the sidebar visible and track a sane window geometry."""
+            if alloc.width >= 480 and alloc.height >= 320:
+                self._last_size = (alloc.width, alloc.height)
+            min_w = self._sidebar_min_width()
+            pos = self.paned.get_position()
+            if pos >= min_w:
+                self._last_pos = pos
+            elif alloc.width > min_w * 2:
+                new_pos = self._sidebar_position(self.paned.get_child1())
+                if new_pos != pos:
+                    self.paned.set_position(new_pos)
+
+        def on_group_pressed(self, row, event, key):
+            """Single click on a group header toggles its expansion."""
+            if event.button != 1:
+                return False
+            if key in self.group_revealed:
+                self.group_revealed.discard(key)
+            else:
+                self.group_revealed.add(key)
+            self._apply_expansion()
+            return True
+
         def on_row_selected(self, _box, row):
+            """Single click on a leaf row opens its page."""
             if row is None:
                 return
-            children = list(self.sidebar.get_children())
-            key = self.PANES[children.index(row)]
+            key = row._ms_page
+            if PAGE_KIND[key] == "group":
+                return
             child = self.stack.get_child_by_name(key)
             if child is not None:
                 self.stack.remove(child)
             page = self.app.make_page(key)
             self.stack.add_named(page, key)
-            # Some pages do not call show_all() themselves; a stack refuses to
-            # switch to an invisible child, so show the page explicitly (this
-            # used to leave the previous page on screen).
             page.show_all()
             self.stack.set_visible_child_name(key)
+            self.title_label.set_text(PAGE_TITLES[key])
+
+        def highlight(self, row):
+            for r in self.sidebar.get_children():
+                ctx = r.get_style_context()
+                if r is row:
+                    ctx.add_class("ms-selected")
+                else:
+                    ctx.remove_class("ms-selected")
 
         def on_search(self, entry):
             needle = entry.get_text().lower().strip()
             self.app.search_needle = needle
+            # Keep every group header visible if any child matches.
+            matching = {}
             for key, row in self.page_rows.items():
-                row.set_visible(self.app.page_matches(key, needle))
-            # Re-render the current schema page so its rows are filtered too
-            # (Ctrl+F searches settings, not only page names).
+                if PAGE_KIND[key] == "group":
+                    continue
+                matching[key] = (not needle) or self.app.page_matches(key, needle)
+            for key, row in self.page_rows.items():
+                if PAGE_KIND[key] == "group":
+                    kids = [k for k in child_pages(key)]
+                    row.set_visible(not needle or any(matching.get(k) for k in kids))
+                else:
+                    parent = PAGE_PARENT[key]
+                    ok = matching[key]
+                    if needle and parent is not None:
+                        ok = ok and parent in self.group_revealed
+                    row.set_visible(ok)
+            # Re-render the current schema page so its rows are filtered too.
             row = self.sidebar.get_selected_row()
             if row is None:
                 return
-            key = self.PANES[list(self.sidebar.get_children()).index(row)]
+            key = row._ms_page
+            if PAGE_KIND.get(key) != "schema":
+                return
             child = self.stack.get_child_by_name(key)
             if isinstance(child, SchemaPage):
-                self.on_row_selected(self.sidebar, row)
+                self.stack.remove(child)
+                page = self.app.make_page(key)
+                self.stack.add_named(page, key)
+                page.show_all()
                 self.stack.set_visible_child_name(key)
 
         def set_dirty(self, dirty):
             """Reflect unsaved changes on the Save button."""
+            ctx = self.save_btn.get_style_context()
             if dirty:
-                self.save_btn.set_label("_Save \u2022")   # bullet = pending
-                self.save_btn.get_style_context().add_class("suggested-action")
+                ctx.add_class("suggested-action")
+                self.save_btn.set_tooltip_text("Save all changed pages (Ctrl+S) \u2014 "
+                                               "unsaved changes!")
             else:
-                self.save_btn.set_label("_Save")
-                self.save_btn.get_style_context().remove_class("suggested-action")
+                ctx.remove_class("suggested-action")
+                self.save_btn.set_tooltip_text("Save all changed pages (Ctrl+S)")
 
         def current_key(self):
-            children = list(self.sidebar.get_children())
             row = self.sidebar.get_selected_row()
-            return self.PANES[children.index(row)] if row else None
+            return row._ms_page if row is not None else None
 
         def goto(self, key):
-            if key in self.page_rows:
-                self.sidebar.select_row(self.page_rows[key])
+            row = self.page_rows.get(key)
+            if row is None:
+                return
+            parent = PAGE_PARENT.get(key)
+            if parent is not None and parent not in self.group_revealed:
+                self.group_revealed.add(parent)
+                self._apply_expansion()
+            if row is not self.sidebar.get_selected_row():
+                self.sidebar.select_row(row)
+            else:
+                self.on_row_selected(self.sidebar, row)
+
+        def rebuild_current(self):
+            """Rebuild the visible page (after undo/redo)."""
+            key = self.current_key()
+            if key is None:
+                return
+            child = self.stack.get_child_by_name(key)
+            if child is not None:
+                self.stack.remove(child)
+            page = self.app.make_page(key)
+            self.stack.add_named(page, key)
+            page.show_all()
+            self.stack.set_visible_child_name(key)
 
         def fit_sidebar(self):
             """Re-apply the sidebar width once widgets are realized."""
@@ -2604,13 +3810,7 @@ def run_gui(args):
                 pass
 
         def on_destroy(self, *_a):
-            """Persist the window geometry for the next launch.
-
-            Values are taken from the last *allocated* geometry, never from
-            ``get_size()`` here: during destruction GTK reports 1x1-ish sizes
-            and a paned position of 1, which used to be saved and then
-            restored as a collapsed sidebar.
-            """
+            """Persist the window geometry for the next launch."""
             try:
                 width, height = getattr(self, "_last_size", (0, 0))
                 pos = getattr(self, "_last_pos", 0)
@@ -2758,9 +3958,9 @@ def run_gui(args):
             except ConfigError as exc:
                 self.error_dialog(str(exc))
                 return
-            for key in self.window.PANES:
+            for key in self.window.page_rows:
                 child = self.window.stack.get_child_by_name(key)
-                if child is not None:
+                if child is not None and hasattr(child, "clear_dirty"):
                     child.clear_dirty()
             self.window.set_dirty(False)
             self.error_dialog("Saved %d file(s)." % (len(saved) +
@@ -2771,6 +3971,8 @@ def run_gui(args):
         def action_reload_mango(self, *_a):
             try:
                 self.config.save()
+                for rf in self._rule_files.values():
+                    rf.save()
             except ConfigError as exc:
                 self.error_dialog(str(exc)); return
             ok, message = reload_mango()
@@ -2924,8 +4126,569 @@ def run_gui(args):
             self.write_ui_pref(blur="1" if switch.get_active() else "0")
             self.apply_blur()
 
+    # ------------------------------------------------------------------ app
+    class MangoApp(object):
+        def __init__(self, args):
+            self.args = args
+            self.window = None
+            self.config = None
+            self._rule_files = {}
+            self.settings_ini = os.path.expanduser(APP_SETTINGS_FILE)
+            self.search_needle = ""      # active Ctrl+F text (settings search)
+            # Session undo/redo stacks (mirrors the web settings' history).
+            self._undo_stack = []
+            self._redo_stack = []
+
+        # -- wiring ---------------------------------------------------------
+        def run(self):
+            self.gtk_app = Gtk.Application(application_id=APP_ID,
+                                           flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.gtk_app.connect("activate", self.on_activate)
+            self.gtk_app.register(None)
+            self.gtk_app.run([])
+            return 0
+
+        def on_activate(self, *_a):
+            self.load_config()
+            self.window = SettingsWindow(self)
+            self.gtk_app.add_window(self.window)
+            self._install_accelerators()
+            self.window.show_all()
+            self.window._apply_expansion()
+            self.window.fit_sidebar()
+            self.apply_theme(self.read_theme_pref())
+            self.window.theme_combo.handler_block_by_func(self.on_theme_changed)
+            self.window.theme_combo.set_active(
+                ["system", "dark", "light"].index(self.read_theme_pref()))
+            self.window.theme_combo.handler_unblock_by_func(self.on_theme_changed)
+            self.update_history_buttons()
+            if self.args.page:
+                self.window.goto(self.args.page)
+            if not self.config.exists:
+                self.offer_default_config()
+
+        def _install_accelerators(self):
+            actions = {
+                "save": ("save", ["<Ctrl>s"], self.action_save),
+                "reload-mango": ("reload-mango", ["<Ctrl>r"], self.action_reload_mango),
+                "quit-app": ("quit-app", ["<Ctrl>q"], self.action_quit),
+                "find": ("find", ["<Ctrl>f", "<Ctrl>k"], self.action_find),
+                "undo": ("undo", ["<Ctrl>z"], self.action_undo),
+                "redo": ("redo", ["<Ctrl><Shift>z"], self.action_redo),
+            }
+            self.win_actions = {}
+            for name, (label, accels, handler) in actions.items():
+                act = Gio.SimpleAction.new(label, None)
+                act.connect("activate", lambda a, p, h=handler: h())
+                self.window.add_action(act)
+                # In GTK 3 accelerators are registered on the Gtk.Application,
+                # with the action scope prefix ("win." for window-scoped actions).
+                self.gtk_app.set_accels_for_action("win." + label, accels)
+                self.win_actions[label] = act
+
+        # -- config plumbing ---------------------------------------------------
+        def load_config(self):
+            self.config = MangoConfig(root=self.args.config)
+            self.config.load()
+            self._rule_files = {}
+
+        def rule_file(self, which):
+            if which in self._rule_files:
+                return self._rule_files[which]
+            paths = {"bind": DEFAULT_BIND_PATH, "rule": DEFAULT_RULE_PATH,
+                     "monitor": DEFAULT_MONITOR_PATH,
+                     "config": self.config.root_path}
+            if which == "config":
+                rf = RuleFile(self.config.root_path)
+                rf.exists = self.config.exists
+                rf.load() if self.config.exists else None
+            else:
+                rf = RuleFile(paths[which])
+                if not rf.exists:
+                    rf.raw_lines = []
+                    _add_issue(self.config.issues, Issue.WARNING,
+                               "%s not found (using an in-memory copy; it is created "
+                               "on first edit)" % paths[which])
+            self._rule_files[which] = rf
+            return rf
+
+        def make_page(self, key):
+            kind = PAGE_KIND.get(key)
+            if kind == "schema":
+                return SchemaPage(self, key)
+            classes = {
+                "autostart": AutostartPage, "environment": EnvPage,
+                "bindings": KeybindsPage,
+                "monitor-rules": MonitorsPage, "tag-rules": TagRulesPage,
+                "window-rules": WindowRulesPage, "layer-rules": LayerRulesPage,
+                "theming": ThemingPage, "background": BackgroundPage,
+                "notifications": NotificationsPage, "files": ConfigFilesPage,
+                "system": SystemInfoPage,
+            }
+            cls = classes.get(key)
+            if cls is None:
+                return SchemaPage(self, "gaps-borders")
+            return cls(self)
+
+        def on_page_changed(self, page):
+            if self.window is not None:
+                self.window.set_dirty(True)
+
+        def page_matches(self, key, needle):
+            return page_matches(key, needle)
+
+        def reload_config(self):
+            self.load_config()
+            if self.window:
+                self.window.queue_draw()
+
+        def offer_default_config(self):
+            default = "/usr/share/mango/config.conf"
+            dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                    message_type=Gtk.MessageType.QUESTION,
+                                    text="No MangoWM config found")
+            dlg.format_secondary_text(
+                "There is no config at %s yet. Copy MangoWM's default config "
+                "now, or start with an empty one?" % os.path.expanduser(DEFAULT_CONFIG_PATH))
+            dlg.add_buttons("Start empty", Gtk.ResponseType.REJECT,
+                            "Copy default", Gtk.ResponseType.ACCEPT, "_Quit", Gtk.ResponseType.CLOSE)
+            resp = dlg.run(); dlg.destroy()
+            if resp == Gtk.ResponseType.CLOSE:
+                self.action_quit(); return
+            if resp == Gtk.ResponseType.ACCEPT and os.path.exists(default):
+                os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+                shutil.copy2(default, self.config.root_path)
+            elif resp == Gtk.ResponseType.ACCEPT:
+                self.error_dialog("Default config not found at %s — starting empty. "
+                                  "MangoWM's defaults will be used until you save."
+                                  % default)
+                return
+            else:
+                os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+                open(self.config.root_path, "a").close()
+            self.load_config()
+
+        # -- setup menu ----------------------------------------------------
+        def setup_create_default(self):
+            """Replace the config with MangoWM's default (with a confirm)."""
+            default = "/usr/share/mango/config.conf"
+            if not os.path.exists(default):
+                self.error_dialog("MangoWM's default config was not found at %s."
+                                  % default)
+                return
+            if self.config.exists:
+                dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                        message_type=Gtk.MessageType.WARNING,
+                                        text="Replace configuration?")
+                dlg.format_secondary_text(
+                    "The current configuration will be backed up, then replaced "
+                    "with the default.")
+                dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                                "_Replace", Gtk.ResponseType.ACCEPT)
+                resp = dlg.run(); dlg.destroy()
+                if resp != Gtk.ResponseType.ACCEPT:
+                    return
+            os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+            if self.config.exists:
+                try:
+                    self.config.save()
+                except ConfigError:
+                    pass
+            shutil.copy2(default, self.config.root_path)
+            self.load_config()
+            self.error_dialog("Default config restored.", error=False)
+
+        def setup_open_folder(self):
+            folder = os.path.dirname(os.path.expanduser(self.config.root_path))
+            for argv in (["xdg-open", folder], ["mmsg", "exec", "xdg-open %s" % folder]):
+                try:
+                    subprocess.Popen(argv)
+                    return
+                except OSError:
+                    continue
+            self.error_dialog("Could not open %s (no xdg-open)." % folder)
+
+        def setup_backup(self):
+            try:
+                saved = self.config.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            for rf in self._rule_files.values():
+                rf.save()
+            self.error_dialog("Backed up %d file(s) to %s." % (
+                len(saved), self.config.backup_root), error=False)
+
+        # -- undo / redo -----------------------------------------------------
+        def record_change(self, undo_fn, redo_fn):
+            """Push an undoable change onto the session history."""
+            self._undo_stack.append((undo_fn, redo_fn))
+            self._redo_stack = []
+            self.update_history_buttons()
+
+        def record_config_undo(self, key, old_value):
+            """Undo helper for a single option edit (set or reset)."""
+            had = self.config.has(key)
+            new_value = self.config.get(key)
+
+            def undo():
+                if had and old_value is not None:
+                    self.config.set(key, old_value)
+                else:
+                    self.config.unset(key)
+
+            def redo():
+                if new_value is not None:
+                    self.config.set(key, new_value)
+                else:
+                    self.config.unset(key)
+
+            self.record_change(undo, redo)
+
+        def record_multi_undo(self, key, old_values, new_values):
+            """Undo helper for multi-value keys (exec, exec_once, env)."""
+            def restore(values):
+                self.config.unset(key)
+                for v in values:
+                    try:
+                        self.config.add_value(key, v)
+                    except ConfigError:
+                        pass
+
+            self.record_change(
+                lambda: restore(list(old_values)),
+                lambda: restore(list(new_values)))
+
+        # -- rule-file snapshots for undo ------------------------------------
+        def rule_snapshot(self, which):
+            return list(self.rule_file(which).raw_lines)
+
+        def rule_restore(self, which, snap):
+            rf = self.rule_file(which)
+            rf.raw_lines = list(snap)
+            rf.dirty = True
+
+        def rule_change(self, which):
+            """Record an undoable RuleFile mutation (call around it)."""
+            before = self.rule_snapshot(which)
+
+            def commit():
+                after = self.rule_snapshot(which)
+                self.record_change(
+                    lambda: self.rule_restore(which, before),
+                    lambda: self.rule_restore(which, after))
+
+            return commit
+
+        def action_undo(self, *_a):
+            if not self._undo_stack:
+                return
+            undo_fn, redo_fn = self._undo_stack.pop()
+            try:
+                undo_fn()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            self._redo_stack.append((undo_fn, redo_fn))
+            if self.window is not None:
+                self.window.set_dirty(True)
+                self.window.rebuild_current()
+            self.update_history_buttons()
+
+        def action_redo(self, *_a):
+            if not self._redo_stack:
+                return
+            undo_fn, redo_fn = self._redo_stack.pop()
+            try:
+                redo_fn()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            self._undo_stack.append((undo_fn, redo_fn))
+            if self.window is not None:
+                self.window.set_dirty(True)
+                self.window.rebuild_current()
+            self.update_history_buttons()
+
+        def update_history_buttons(self):
+            if self.window is None:
+                return
+            self.window.undo_btn.set_sensitive(bool(self._undo_stack))
+            self.window.redo_btn.set_sensitive(bool(self._redo_stack))
+
+        # -- actions ------------------------------------------------------------
+        def action_save(self, *_a):
+            try:
+                saved = self.config.save()
+                for rf in self._rule_files.values():
+                    rf.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            for key in self.window.page_rows:
+                child = self.window.stack.get_child_by_name(key)
+                if child is not None and hasattr(child, "clear_dirty"):
+                    child.clear_dirty()
+            self.window.set_dirty(False)
+            self.error_dialog("Saved %d file(s)." % (len(saved) +
+                             sum(1 for rf in self._rule_files.values() if rf.dirty)),
+                              error=False)
+            self.load_config()
+
+        def action_reload_mango(self, *_a):
+            try:
+                self.config.save()
+                for rf in self._rule_files.values():
+                    rf.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc)); return
+            ok, message = reload_mango()
+            if ok:
+                self.error_dialog("MangoWM reloaded.", error=False)
+            else:
+                self.error_dialog("Reload failed: %s" % message)
+
+        def action_quit(self, *_a):
+            dirty = []
+            if self.config:
+                dirty = self.config.changed_files()
+                dirty += [rf for rf in self._rule_files.values() if rf.dirty]
+            if dirty:
+                dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                        message_type=Gtk.MessageType.WARNING,
+                                        text="Save unsaved changes before quitting?")
+                dlg.add_buttons("_Discard", Gtk.ResponseType.REJECT,
+                                "_Save", Gtk.ResponseType.ACCEPT,
+                                "_Cancel", Gtk.ResponseType.CANCEL)
+                resp = dlg.run(); dlg.destroy()
+                if resp == Gtk.ResponseType.CANCEL:
+                    return
+                if resp == Gtk.ResponseType.ACCEPT:
+                    self.action_save()
+            self.gtk_app.quit()
+
+        def action_find(self, *_a):
+            self.window.search.grab_focus()
+
+        # -- dialogs / theme ----------------------------------------------------
+        def error_dialog(self, message, error=True):
+            dlg = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                    message_type=Gtk.MessageType.ERROR if error
+                                    else Gtk.MessageType.INFO,
+                                    buttons=Gtk.ButtonsType.OK,
+                                    text=message[:400])
+            dlg.run(); dlg.destroy()
+
+        def warning_in_dialog(self, dlg, message):
+            dlg.get_content_area().pack_start(
+                Gtk.Label(label=message), False, False, 4)
+            dlg.show_all()
+
+        def read_theme_pref(self):
+            try:
+                import configparser
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                val = cp.get("ui", "theme", fallback="system")
+                return val if val in ("system", "dark", "light") else "system"
+            except Exception:
+                return "system"
+
+        def write_theme_pref(self, theme):
+            self.write_ui_pref(theme=theme)
+
+        def read_ui_pref(self, key, default=None):
+            """Read a value from the [ui] section of ~/.config/mango-settings."""
+            try:
+                import configparser
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                return cp.get("ui", key, fallback=default)
+            except Exception:
+                return default
+
+        def write_ui_pref(self, **values):
+            """Merge values into the [ui] section, keeping other keys."""
+            try:
+                import configparser
+                os.makedirs(os.path.dirname(self.settings_ini), exist_ok=True)
+                cp = configparser.ConfigParser()
+                cp.read(self.settings_ini)
+                if not cp.has_section("ui"):
+                    cp.add_section("ui")
+                for key, value in values.items():
+                    cp.set("ui", key, str(value))
+                with open(self.settings_ini, "w") as fh:
+                    cp.write(fh)
+            except OSError:
+                pass
+
+        def on_theme_changed(self, combo):
+            theme = combo.get_active_text()
+            if theme:
+                self.apply_theme(theme)
+                self.write_theme_pref(theme)
+
+        def apply_theme(self, theme):
+            prefer_dark = theme == "dark" or (theme == "system" and
+                          (gsettings_get(GTK_THEME_SCHEMA, "color-scheme") == "prefer-dark"))
+            Gtk.Settings.get_default().set_property(
+                "gtk-application-prefer-dark-theme", bool(prefer_dark))
+            self._prefer_dark = bool(prefer_dark)
+            # Re-render the stylesheet for the new light/dark palette.
+            self.apply_blur()
+
+        # -- translucent / blurred surface ------------------------------------
+        def blur_enabled(self):
+            return self.read_ui_pref("blur", "1") != "0"
+
+        def apply_blur(self):
+            """(Re)load the app stylesheet with or without translucency.
+
+            Colors are the MangoWM web settings' semantic palette (warm
+            cream/mango light, warm dark), applied literally so the app looks
+            the same on every GTK theme.  With blur enabled the surface is
+            semi-transparent so MangoWM's blur shows through.
+            """
+            on = self.blur_enabled() and getattr(self.window, "translucent", False)
+            dark = bool(getattr(self, "_prefer_dark", False))
+            if dark:
+                bg, fg, card = "#090703", "#f3f2ed", "#191510"
+                border, primary, primary_fg = "rgba(255,255,255,0.10)", "#f3b01d", "#1a0f01"
+                muted_fg, sidebar, ring = "#bbb7ae", "#191510", "#7cbd89"
+                destructive = "#ff6467"
+                shadow = "rgba(0,0,0,0.45)"
+            else:
+                bg, fg, card = "#fefdfa", "#291d0f", "#ffffff"
+                border, primary, primary_fg = "#e6e1d3", "#f5aa00", "#412705"
+                muted_fg, sidebar, ring = "#635646", "#fcfaf3", "#579766"
+                destructive = "#e7000b"
+                shadow = "rgba(80,60,20,0.18)"
+            bg_a = "0.80" if on else "1.0"
+            card_a = "0.82" if on else "1.0"
+            side_a = "0.75" if on else "1.0"
+            radius = "14px" if on else "0px"
+            css = """
+                @define-color ms_fg %(fg)s;
+                @define-color ms_primary %(primary)s;
+                @define-color ms_destructive %(destructive)s;
+
+                window.app-window { background-color: transparent; }
+                .app-surface {
+                    background-color: alpha(%(bg)s, %(bg_a)s);
+                    border-radius: %(radius)s;
+                }
+                .ms-header {
+                    background-color: transparent;
+                    border-bottom: 1px solid alpha(%(border)s, 0.9);
+                }
+                .ms-header-title { font-weight: 600; color: %(fg)s; }
+                .ms-search entry, entry.ms-search {
+                    background-color: alpha(%(fg)s, 0.05);
+                    border: 1px solid alpha(%(border)s, 0.8);
+                    border-radius: 8px;
+                    color: %(fg)s;
+                }
+                .ms-search image { color: alpha(%(muted_fg)s, 0.9); }
+
+                .app-sidebar {
+                    background-color: alpha(%(sidebar)s, %(side_a)s);
+                    border-right: 1px solid alpha(%(border)s, 0.55);
+                }
+                .ms-brand-name { color: %(fg)s; font-size: 105%%; }
+                .ms-brand-version { color: alpha(%(muted_fg)s, 0.8); }
+                list.ms-nav { background-color: transparent; }
+                .ms-nav-row { border-radius: 8px; }
+                .ms-nav-row:hover { background-color: alpha(%(fg)s, 0.06); }
+                .ms-nav-row.ms-selected {
+                    background-color: alpha(%(primary)s, 0.20);
+                }
+                .ms-nav-row.ms-selected label { color: %(fg)s; font-weight: 600; }
+                .ms-nav-label { color: %(fg)s; }
+                .ms-nav-group label { font-weight: 600; }
+                .ms-nav-chevron { color: alpha(%(muted_fg)s, 0.9); }
+                .ms-nav-chevron.ms-open  { -gtk-icon-transform: rotate(0.25turn); }
+                .ms-nav-chevron.ms-closed { -gtk-icon-transform: rotate(0turn); }
+
+                /* Cards and rows */
+                .ms-card {
+                    background-color: alpha(%(card)s, %(card_a)s);
+                    border: 1px solid alpha(%(border)s, 0.85);
+                    border-radius: 12px;
+                }
+                .ms-card-title { font-weight: 600; color: %(fg)s; }
+                .ms-page-title { color: %(fg)s; }
+                .ms-page-desc { color: alpha(%(muted_fg)s, 0.9); }
+                .ms-note { color: alpha(%(muted_fg)s, 0.85); }
+                list.ms-rows { background-color: transparent; }
+                .ms-row { background-color: transparent; }
+                .ms-row:hover { background-color: alpha(%(fg)s, 0.045); }
+                .ms-row-label { color: %(fg)s; font-weight: 500; }
+                .ms-row-label.set-in-config { font-weight: 700; }
+                .ms-row-desc { color: alpha(%(muted_fg)s, 0.75); }
+                .ms-state-on { color: %(primary)s; font-weight: 700; }
+                .ms-state-off { color: alpha(%(muted_fg)s, 0.45); font-weight: 700; }
+                .ms-readout { color: %(fg)s; font-family: monospace; }
+                .ms-reset { color: alpha(%(muted_fg)s, 0.7); padding: 3px;
+                            background: transparent; border: none;
+                            border-radius: 6px; }
+                .ms-reset:hover { color: %(fg)s;
+                                  background: alpha(%(fg)s, 0.08); }
+                .ms-reset:disabled { color: alpha(%(muted_fg)s, 0.25); }
+                .ms-prompt { color: %(primary)s; font-family: monospace;
+                             font-weight: 700; }
+                .ms-add-button { padding: 2px 6px; }
+                .ms-secondary-button { padding: 2px 10px; }
+                .ms-add-row entry, .app-sidebar entry,
+                spinbutton, entry, combobox button,
+                combobox entry {
+                    background-color: alpha(%(fg)s, 0.04);
+                    border: 1px solid alpha(%(border)s, 0.8);
+                    border-radius: 8px;
+                    color: %(fg)s;
+                    box-shadow: none;
+                }
+                scale highlight { background-color: %(primary)s; }
+                scale slider {
+                    background-color: %(card)s;
+                    border: 1px solid alpha(%(border)s, 1.0);
+                }
+                switch { color: %(primary_fg)s; }
+                switch:checked { background-color: %(primary)s; }
+                button.suggested-action {
+                    background-color: %(primary)s;
+                    color: %(primary_fg)s;
+                    border: none;
+                    border-radius: 8px;
+                }
+                .destructive-action { color: %(destructive)s; }
+                tooltip { background-color: %(fg)s; color: %(bg)s; border-radius: 8px; }
+            """ % {
+                "bg": bg, "fg": fg, "card": card, "border": border,
+                "primary": primary, "primary_fg": primary_fg,
+                "muted_fg": muted_fg, "sidebar": sidebar, "ring": ring,
+                "destructive": destructive, "shadow": shadow,
+                "bg_a": bg_a, "card_a": card_a, "side_a": side_a,
+                "radius": radius,
+            }
+            provider = getattr(self, "_css_provider", None)
+            if provider is None:
+                provider = Gtk.CssProvider()
+                Gtk.StyleContext.add_provider_for_screen(
+                    Gdk.Screen.get_default(), provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                self._css_provider = provider
+            try:
+                provider.load_from_data(css.encode("utf-8"))
+            except Exception as exc:      # never let styling break the app
+                sys.stderr.write("mango-settings: stylesheet error: %s\n" % exc)
+
+        def on_blur_toggled(self, switch, _pspec=None):
+            self.write_ui_pref(blur="1" if switch.get_active() else "0")
+            self.apply_blur()
     app = MangoApp(args)
     return app.run()
+
 
 
 # ---------------------------------------------------------------------------

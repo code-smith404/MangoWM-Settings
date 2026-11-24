@@ -395,8 +395,10 @@ class SchemaTests(unittest.TestCase):
                 self.assertTrue(ok, "%s default %r rejected: %s" % (opt.key, opt.default, err))
 
     def test_pages_cover_expected_set(self):
-        for key in ms.PAGE_ORDER:
-            self.assertIn(key, ms.SCHEMA)
+        # Every schema page (one with generated rows) exists in the nav tree.
+        for key in ms.PAGE_SCHEMA:
+            self.assertIn(key, ms.PAGE_ORDER)
+            self.assertEqual(ms.PAGE_KIND[key], "schema")
 
     def test_choice_lists_nonempty(self):
         for opts in ms.SCHEMA.values():
@@ -550,7 +552,10 @@ class ResolvePageTests(unittest.TestCase):
         self.assertEqual(ms.resolve_page("CONFIG FILES"), "files")
         self.assertEqual(ms.resolve_page("config-files"), "files")
         self.assertEqual(ms.resolve_page("config_files"), "files")
-        self.assertEqual(ms.resolve_page("window behavior"), "behavior")
+        # Pre-2.3 page keys are aliased onto the new tree.
+        self.assertEqual(ms.resolve_page("window behavior"), "focus")
+        self.assertEqual(ms.resolve_page("windowrules"), "window-rules")
+        self.assertEqual(ms.resolve_page("startup"), "autostart")
 
     def test_unknown_and_empty(self):
         self.assertIsNone(ms.resolve_page("nope"))
@@ -566,17 +571,17 @@ class SearchTests(unittest.TestCase):
             self.assertTrue(ms.page_matches(key, ""))
 
     def test_page_title_matches(self):
-        self.assertTrue(ms.page_matches("keybindings", "keybind"))
-        self.assertTrue(ms.page_matches("behavior", "window"))
+        self.assertTrue(ms.page_matches("bindings", "binding"))
+        self.assertTrue(ms.page_matches("window-rules", "window"))
 
     def test_setting_matches_its_page(self):
-        # "gap" appears in option labels of Appearance and Layouts.
-        self.assertTrue(ms.page_matches("appearance", "gap"))
-        self.assertTrue(ms.page_matches("layouts", "gap"))
-        self.assertFalse(ms.page_matches("keybindings", "gap"))
+        # "gap" appears in option labels of Gaps & Borders only.
+        self.assertTrue(ms.page_matches("gaps-borders", "gap"))
+        self.assertTrue(ms.page_matches("layout-tiling", "gap"))
+        self.assertFalse(ms.page_matches("bindings", "gap"))
 
     def test_case_insensitive(self):
-        self.assertTrue(ms.page_matches("appearance", "GAP"))
+        self.assertTrue(ms.page_matches("gaps-borders", "GAP"))
 
     def test_option_matches_label_key_and_desc(self):
         opt = ms.SCHEMA_OPTIONS["gap_inner_horizontal"]
@@ -592,9 +597,9 @@ class SearchTests(unittest.TestCase):
 
     def test_schema_groups_have_no_orphan_options(self):
         # Every option on a schema page belongs to a titled section, which is
-        # what the UI uses to render frames.
-        for key in ("appearance", "animations", "behavior", "layouts", "input"):
-            for opt in ms.SCHEMA[key]:
+        # what the UI uses to render cards.
+        for key, opts in ms.PAGE_SCHEMA.items():
+            for opt in opts:
                 self.assertTrue(opt.group, "%s has no group" % opt.key)
 
 

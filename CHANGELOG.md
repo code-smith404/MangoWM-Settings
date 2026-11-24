@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.3.0 — redesigned after the official MangoWM web settings
+
+The UI now mirrors https://mangowm.github.io/settings/ while keeping the
+same single-file, GTK 3, no-bloat approach:
+
+- **Navigation tree matching the web settings**: root pages Autostart,
+  Environment Variables and Bindings, plus collapsible groups — Appearance
+  (Colors, Window Effects, Gaps & Borders, Cursor), Layout (Tiling, Dwindle,
+  Scroller), Input Devices (Keyboard, Pointer, Trackpad), Animations
+  (General, Timing, Curves), Behaviour (Focus, Drag & Floating, Scratchpad),
+  Rules (Monitor, Tag, Window, Layer rules) and Desktop & System (Theming,
+  Background, Notifications, Config Files, System Info).
+- **Web-style chrome**: slim header bar with sidebar toggle, page title,
+  centered search pill (Ctrl+K or Ctrl+F), config-files button, setup menu,
+  undo/redo, save, reload and quit; drag the header to move the window.
+- **Cards and rows like the web panels**: titled rounded cards, rows with
+  label + description on the left and the control on the right — switches
+  with an On/Off indicator, sliders with numeric readouts, dropdowns,
+  color pickers writing 0xRRGGBBAA, and a hover reset button per row.
+- **Undo/redo (Ctrl+Z / Ctrl+Shift+Z)** for every setting change, reset and
+  rule/env/autostart edit.
+- **Terminal-style list editors**: `$ …` add rows for exec_once, exec, env
+  and binds, matching the web Autostart page.
+- **Setup menu**: create the default config, open the config folder, back up
+  the config.
+- **Mango palette** in light and dark, converted from the web theme tokens.
+
 ## Unreleased — distribution packaging
 
 - **Native packages for every major distribution**: Arch/AUR (stable and

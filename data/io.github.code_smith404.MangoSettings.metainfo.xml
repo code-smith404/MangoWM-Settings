@@ -29,6 +29,16 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.3.0" date="2025-11-24">
+      <description>
+        <p>Redesigned to match the official MangoWM web settings: sidebar with
+        collapsible groups (Autostart, Environment Variables, Bindings,
+        Appearance, Layout, Input Devices, Animations, Behaviour, Rules),
+        header bar with search and undo/redo, web-style cards with toggle,
+        slider and color-picker rows, terminal-style autostart/env editors and
+        a setup menu.</p>
+      </description>
+    </release>
     <release version="2.2.2" date="2025-11-14">
       <description>
         <p>Blurred, translucent window with a Blur toggle, and theme-aware translucent cards and sidebar.</p>

@@ -1,6 +1,6 @@
 # Template file for 'mango-settings'
 pkgname=mango-settings
-version=2.2.2
+version=2.3.0
 revision=1
 wrksrc="MangoWM-Settings-${version}"
 build_style=gnu-makefile
