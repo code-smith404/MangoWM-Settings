@@ -28,6 +28,15 @@ chown -R builder "$work"
 
 su builder -s /bin/sh -c "abuild-keygen -a -n >/dev/null"
 cp -f /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
+# Put the locally built tarball into abuild's source cache (SRCDEST): abuild
+# only skips downloading a source URL when the file is already there, and the
+# release tag (and thus its tarball URL) does not exist before the release.
+mkdir -p "$work/srcdest"
+cp -f "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz" \
+    "$work/srcdest/"
+echo "SRCDEST=$work/srcdest" > /home/builder/.abuild/abuild.conf
+chown -R builder "$work" /home/builder/.abuild
+
 su builder -s /bin/sh -c "export REPODEST='$work/packages'; cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
 
 mkdir -p "$out"
