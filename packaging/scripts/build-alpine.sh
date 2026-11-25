@@ -19,34 +19,31 @@ if ! id builder >/dev/null 2>&1; then
 fi
 
 work=${ALPINE_BUILD_DIR:-/tmp/mango-abuild}
+pkgdir=$work/aports/testing/mango-settings
 rm -rf "$work"
-mkdir -p "$work/aports/testing/mango-settings" "$work/srcdest"
-cp -f "$root/packaging/alpine/APKBUILD" "$work/aports/testing/mango-settings/APKBUILD"
+mkdir -p "$pkgdir"
+cp -f "$root/packaging/alpine/APKBUILD" "$pkgdir/APKBUILD"
 
-# Build the source tarball exactly like `git archive` for the release tag
-# (deterministic, no timestamps) and record its real sha512 in the APKBUILD so
-# `abuild checksum` never has to download the - not yet existing - release tag.
+# The release tag does not exist before the release, so the APKBUILD's source
+# URL would 404 (abuild retries the network even when a cached tarball is
+# present). Build the tarball from HEAD with `git archive` instead, keep it
+# next to the APKBUILD and point source= at the local file: both
+# `abuild checksum` and `abuild -r` then run fully offline.
 git -C "$root" archive --prefix="MangoWM-Settings-$version/" HEAD \
-    | gzip -n > "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz"
-sum=$(sha512sum "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz" \
-    | cut -d" " -f1)
-sed -i "s|^sha512sums=.*|sha512sums=\"$sum\"|" \
-    "$work/aports/testing/mango-settings/APKBUILD"
-cp -f "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz" \
-    "$work/srcdest/"
+    | gzip -n > "$pkgdir/mango-settings-$version.tar.gz"
+sum=$(sha512sum "$pkgdir/mango-settings-$version.tar.gz" | cut -d" " -f1)
+sed -i \
+    -e "s|^source=.*|source=\"mango-settings-$version.tar.gz\"|" \
+    -e "s|^sha512sums=.*|sha512sums=\"$sum\"|" \
+    "$pkgdir/APKBUILD"
 
 chown -R builder "$work"
+# abuild-keygen -a stores PACKAGER_PRIVKEY in ~/.abuild/abuild.conf; that file
+# must be left intact or `abuild -r` cannot sign the package index.
 su builder -s /bin/sh -c "abuild-keygen -a -n >/dev/null"
 cp -f /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
 
-# Serve the tarball to abuild from a local mirror so nothing is fetched over
-# the network: DISTFILES_MIRROR is tried first by abuild (plain cp) and
-# SRCDEST is where the cached copy is validated against sha512sums.
-printf 'SRCDEST=%s\nDISTFILES_MIRROR=%s\n' "$work/srcdest" "$work/srcdest" \
-    > /home/builder/.abuild/abuild.conf
-chown -R builder "$work" /home/builder/.abuild
-
-su builder -s /bin/sh -c "export REPODEST='$work/packages' DISTFILES_MIRROR='$work/srcdest'; cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
+su builder -s /bin/sh -c "export REPODEST='$work/packages'; cd '$pkgdir' && abuild checksum && abuild -r"
 
 mkdir -p "$out"
 find "$work/packages" -name 'mango-settings-*.apk' -exec cp -f {} "$out/" \;
