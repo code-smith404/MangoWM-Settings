@@ -330,6 +330,7 @@ class OptDef(object):
         self.min = min_
         self.max = max_
         self.choices = list(choices) if choices else None
+        self.choice_labels = None     # optional value -> display label
         self.desc = desc
         self.multi = multi            # keys that may repeat: exec, exec_once
         self.group = group            # section heading shown on the page
@@ -940,6 +941,428 @@ PAGE_RECORD = {
     "monitor-rules": "monitor", "tag-rules": "tag_rule",
     "window-rules": "window_rule", "layer-rules": "layer_rule",
 }
+
+WEB_FIELDS = {
+    'allow_lock_transparent': ('Allow Lock Transparent', 'Permit transparent/translucent lockscreens.', None),
+    'allow_shortcuts_inhibit': ('Allow Shortcut Inhibition', 'Let apps suspend compositor keybindings.', None),
+    'allow_tearing': ('Allow Tearing', 'Tearing policy: 0 off, 1 any window, 2 fullscreen only.', [('0', 'Disabled'), ('1', 'Always'), ('2', 'Fullscreen only')]),
+    'always_show_group_bar': ('Always Show Group Bar', 'Show the group bar on every window.', None),
+    'animation_curve_close': ('Close Curve', 'Cubic bezier curve for window close animations (x1,y1,x2,y2).', None),
+    'animation_curve_focus': ('Focus Curve', 'Bezier curve for the focus opacity transition (x1,y1,x2,y2).', None),
+    'animation_curve_move': ('Move Curve', 'Cubic bezier curve for move/resize animations (x1,y1,x2,y2).', None),
+    'animation_curve_opacity_fade_in': ('Fade In Curve', 'Cubic bezier curve for fade-in opacity animations (x1,y1,x2,y2).', None),
+    'animation_curve_opacity_fade_out': ('Fade Out Curve', 'Cubic bezier curve for fade-out opacity animations (x1,y1,x2,y2).', None),
+    'animation_curve_open': ('Open Curve', 'Cubic bezier curve for window open animations (x1,y1,x2,y2).', None),
+    'animation_curve_tag': ('Tag Switch Curve', 'Cubic bezier curve for tag-switch animations (x1,y1,x2,y2).', None),
+    'animation_duration_close': ('Close Duration', 'Duration of window close animations in milliseconds (0-50000).', None),
+    'animation_duration_focus': ('Focus Duration', 'Opacity transition duration when focus changes, in milliseconds (0-50000).', None),
+    'animation_duration_move': ('Move Duration', 'Duration of window move/resize animations in milliseconds (0-50000).', None),
+    'animation_duration_open': ('Open Duration', 'Duration of window open animations in milliseconds (0-50000).', None),
+    'animation_duration_tag': ('Tag Switch Duration', 'Duration of tag-switch animations in milliseconds (0-50000).', None),
+    'animation_fade_in': ('Fade In', 'Fade windows in when they appear.', None),
+    'animation_fade_out': ('Fade Out', 'Fade windows out when they close.', None),
+    'animation_type_close': ('Close Animation Type', 'Close animation for windows. Unset uses zoom; none disables it.', [('', 'Unset'), ('none', 'None'), ('fade', 'Fade'), ('slide', 'Slide'), ('zoom', 'Zoom')]),
+    'animation_type_open': ('Open Animation Type', 'Open animation for windows. Unset uses slide; none disables it.', [('', 'Unset'), ('none', 'None'), ('fade', 'Fade'), ('slide', 'Slide'), ('zoom', 'Zoom')]),
+    'animations': ('Enable Animations', 'Toggle window animations. Gesture transitions still animate when this is off.', None),
+    'auto_reload_config': ('Auto Reload Config', 'Reload when the main config or a sourced file changes.', None),
+    'axis_bind_apply_timeout': ('Axis Bind Apply Timeout', 'Minimum milliseconds between axis binding calls (0-1000). Closer scroll events are ignored.', None),
+    'axis_scroll_factor': ('Axis Scroll Factor', 'Multiplier for axis (wheel) scroll speed (0.1-10.0).', None),
+    'blur': ('Enable Blur', 'Toggle background blur behind windows.', None),
+    'blur_layer': ('Blur Layer Surfaces', 'Apply blur to layer-shell surfaces (panels, notifications). Requires blur.', None),
+    'blur_optimized': ('Optimized Blur', 'Cache the wallpaper and background for faster blur.', None),
+    'blur_params_brightness': ('Blur Brightness', 'Brightness multiplier for the blurred layer.', None),
+    'blur_params_contrast': ('Blur Contrast', 'Contrast multiplier for the blurred layer.', None),
+    'blur_params_noise': ('Blur Noise', 'Noise level added to the blur.', None),
+    'blur_params_num_passes': ('Blur Passes', 'Number of blur iterations.', None),
+    'blur_params_radius': ('Blur Radius', 'Pixel radius of the blur kernel.', None),
+    'blur_params_saturation': ('Blur Saturation', 'Saturation multiplier for the blurred layer.', None),
+    'border_color': ('Inactive Border Color', 'Border color for unfocused windows.', None),
+    'border_px': ('Border Width', 'Thickness of window borders in pixels.', None),
+    'border_radius': ('Border Radius', 'Corner radius in pixels.', None),
+    'border_resize_size': ('Border Resize Hitbox', 'Thickness in pixels of the resize grab strip. 0 uses the border width.', None),
+    'button_map': ('Button Map', 'Trackpad tap-to-button mapping: 0 left/right/middle, 1 left/middle/right.', [('0', 'Left / right / middle'), ('1', 'Left / middle / right')]),
+    'center_master_overspread': ('Center Master Overspread', 'In center_tile, let the master area fill the screen when there are no stack windows.', None),
+    'center_when_single_stack': ('Center Master With One Stack Window', 'Center the master when the stack has only one window.', None),
+    'circle_layout': ('Circle Layout', 'Ordered layouts cycled by switch_layout.', None),
+    'cursor_hide_on_keypress': ('Hide Cursor on Keypress', 'Auto-hide the cursor whenever any keyboard key is pressed.', None),
+    'cursor_hide_timeout': ('Cursor Hide Timeout', 'Seconds of inactivity before auto-hiding the cursor (0 = never).', None),
+    'cursor_size': ('Cursor Size', 'XCursor size in pixels.', None),
+    'cursor_theme': ('Cursor Theme', 'XCursor theme name. Empty uses the system XCursor theme.', None),
+    'deck_tab_mode': ('Deck Tab Mode', "Merge the deck layout's stack windows into a tab.", None),
+    'default_master_count': ('Number of Masters', 'Number of windows in the master area.', None),
+    'default_master_factor': ('Master Area Factor', 'Master area size: width in horizontal layouts, height in vertical layouts (0.1-0.9).', None),
+    'dim_enable': ('Dim Enable', 'Enable the dim overlay on windows.', None),
+    'dim_focused_color': ('Dim Focused Color', 'Dim color of the focused window.', None),
+    'dim_unfocused_color': ('Dim Unfocused Color', 'Dim color for unfocused windows.', None),
+    'disable_middle_paste': ('Disable Middle Paste', 'Disable middle-click paste by turning off primary selection for Wayland apps.', None),
+    'disable_trackpad': ('Disable Trackpad', 'Disable all trackpad devices.', None),
+    'drag_corner': ('Resize Corner', 'Floating window resize corner: 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right, 4 nearest.', None),
+    'drag_lock': ('Drag Lock', 'Keep dragging after lifting the finger.', None),
+    'drag_tile_small': ('Small Tile Preview', 'Shrink dragged tile to a small thumbnail.', None),
+    'drag_tile_to_tile': ('Tile-to-Tile Drag', 'Reorder tiled windows by dragging.', None),
+    'drag_warp_cursor': ('Warp Cursor on Drag Resize', 'Warp the pointer to the chosen corner when a resize starts from the window body.', None),
+    'drop_color': ('Drop Target Color', 'Color of the drop target rectangle shown while dragging a tiled window.', None),
+    'dwindle_drop_simple_split': ('Dwindle Drop Simple Split', 'Use a 2-zone drop preview that follows dwindle_split_ratio instead of four quadrants.', None),
+    'dwindle_horizontal_split': ('Horizontal Split', 'Where a new window goes in a horizontal split: 0 follows the cursor, 1 right, 2 left.', [('0', 'Follow cursor'), ('1', 'Right'), ('2', 'Left')]),
+    'dwindle_manual_split': ('Manual Split', 'Use the direction set by dwindle_toggle_split_direction for new splits.', None),
+    'dwindle_preserve_split': ('Dwindle Preserve Split', 'Keep the sibling split geometry when a window closes.', None),
+    'dwindle_smart_resize': ('Smart Resize', 'When dragging a split, move it toward the cursor regardless of which side was grabbed.', None),
+    'dwindle_smart_split': ('Dwindle Smart Split', 'Choose the split direction from the cursor position inside the focused window.', None),
+    'dwindle_split_ratio': ('Split Ratio', 'Proportion of space for the first child when splitting.', None),
+    'dwindle_vertical_split': ('Vertical Split', 'Where a new window goes in a vertical split: 0 follows the cursor, 1 below, 2 above.', [('0', 'Follow cursor'), ('1', 'Below'), ('2', 'Above')]),
+    'edge_scroller_focus_allow_speed': ('Edge Focus Speed', 'Minimum pointer speed required before edge focus triggers (0-1000).', None),
+    'edge_scroller_pointer_focus': ('Edge Pointer Focus', 'Focus scroller windows that are partly off-screen.', None),
+    'enable_border_resize': ('Enable Border Resize', 'Drag a window border with the left mouse button to resize. Tiled windows show only shared edges.', None),
+    'enable_floating_snap': ('Floating Snap', 'Snap floating windows to screen edges and other visible floating windows.', None),
+    'enable_hotarea': ('Enable Hotarea', 'Activate overview by moving the cursor to a screen corner.', None),
+    'exchange_cross_monitor': ('Cross-Monitor Exchange', 'Let exchange_client and move_client cross monitor boundaries.', None),
+    'fade_in_begin_opacity': ('Fade In Start Opacity', 'Initial opacity for fade-in animations (0.0-1.0).', None),
+    'fade_out_begin_opacity': ('Fade Out Start Opacity', 'Initial opacity for fade-out animations (0.0-1.0).', None),
+    'float_full_to_top': ('Shared Top Layer', 'One layer for fullscreen, floating, and layer-shell top windows. The last raised window is on top.', None),
+    'focus_color': ('Active Border Color', 'Border color of the focused window on the selected monitor.', None),
+    'focus_cross_monitor': ('Cross-Monitor Focus', 'Let directional focus cross monitor boundaries.', None),
+    'focus_cross_tag': ('Cross-Tag Focus', 'Let directional focus cross tag boundaries.', None),
+    'focus_direction_only_zone_overlap': ('Focus Direction Zone Overlap', 'Directional focus only picks windows overlapping the current window on the perpendicular axis.', None),
+    'focus_on_activate': ('Focus on Activate', 'Focus windows immediately when they request activation.', None),
+    'focused_opacity': ('Focused Opacity', 'Opacity of the currently focused window.', None),
+    'gap_inner_horizontal': ('Inner Gap Horizontal', 'Horizontal gap between tiled windows.', None),
+    'gap_inner_vertical': ('Inner Gap Vertical', 'Vertical gap between tiled windows.', None),
+    'gap_outer_horizontal': ('Outer Gap Horizontal', 'Horizontal gap between windows and screen edges.', None),
+    'gap_outer_vertical': ('Outer Gap Vertical', 'Vertical gap between windows and screen edges.', None),
+    'gesture_live': ('Live Gestures', 'Update tag, focus, and overview transitions while fingers move, not only after release.', None),
+    'gesture_swipe_cancel_ratio': ('Swipe Cancel Ratio', 'Fraction of the last page to drag before release commits the swipe.', None),
+    'gesture_swipe_distance': ('Swipe Distance', 'Finger travel (px) that corresponds to one full page transition.', None),
+    'gesture_swipe_min_speed_to_force': ('Swipe Force Speed', 'Average speed per event (px) that commits the swipe below the cancel ratio.', None),
+    'global_color': ('Global Border Color', 'Border color for a focused global window.', None),
+    'group_bar_button_color': ('Close Button Color', 'Close button color.', None),
+    'group_bar_button_margin': ('Close Button Margin', 'Close button inset from the right edge in px.', None),
+    'group_bar_button_size': ('Close Button Size', 'Close button size in px.', None),
+    'group_bar_close_button_enable': ('Group Bar Close Button', 'Show a close button on the group bar.', None),
+    'group_bar_decorate_bg_color': ('Group Bar Background', 'Background color of the group bar.', None),
+    'group_bar_decorate_border_color': ('Group Bar Border Color', 'Border color of the group bar.', None),
+    'group_bar_decorate_border_width': ('Group Bar Border Width', 'Border width of the group bar in pixels.', None),
+    'group_bar_decorate_corner_radius': ('Group Bar Corner Radius', 'Corner radius of the group bar in pixels.', None),
+    'group_bar_decorate_fg_color': ('Group Bar Text Color', 'Text color of the group bar.', None),
+    'group_bar_decorate_focus_bg_color': ('Group Bar Focus Background', 'Background color of the focused group bar entry.', None),
+    'group_bar_decorate_focus_fg_color': ('Group Bar Focus Text Color', 'Text color of the focused group bar entry.', None),
+    'group_bar_decorate_font_desc': ('Group Bar Font', 'Pango font description for the group bar.', None),
+    'group_bar_decorate_padding_x': ('Group Bar Horizontal Padding', 'Horizontal padding inside the group bar in pixels.', None),
+    'group_bar_decorate_padding_y': ('Group Bar Vertical Padding', 'Vertical padding inside the group bar in pixels.', None),
+    'group_bar_height': ('Group Bar Height', 'Height of the per-window group bar in pixels.', None),
+    'hdr_depth': ('HDR Render Depth', 'HDR render depth: 0 auto, 1 force 8-bit, 2 force 10-bit.', [('0', 'Auto'), ('1', '8-bit'), ('2', '10-bit')]),
+    'hotarea_corner': ('Hotarea Corner', 'Screen corner for the overview hotarea: 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.', [('0', 'Top Left'), ('1', 'Top Right'), ('2', 'Bottom Left'), ('3', 'Bottom Right')]),
+    'hotarea_disable_on_fullscreen': ('Hotarea Disable On Fullscreen', 'Do not trigger the hot area while a fullscreen window is focused.', None),
+    'hotarea_size': ('Hotarea Size', 'Size of the corner activation zone in pixels (1-1000).', None),
+    'idle_inhibit_ignore_visible': ('Allow Hidden Clients to Inhibit Idle', 'Let clients that are not visible inhibit idle.', None),
+    'idle_inhibit_when_fullscreen': ('Inhibit Idle When Fullscreen', 'Keep idle inhibited while a fullscreen window is focused.', None),
+    'jump_label_decorate_bg_color': ('Jump Label Background', 'Background color of the jump label.', None),
+    'jump_label_decorate_border_color': ('Jump Label Border Color', 'Border color of the jump label.', None),
+    'jump_label_decorate_border_width': ('Jump Label Border Width', 'Border width of the jump label in pixels.', None),
+    'jump_label_decorate_corner_radius': ('Jump Label Corner Radius', 'Corner radius of the jump label in pixels.', None),
+    'jump_label_decorate_fg_color': ('Jump Label Text Color', 'Text color of the jump label.', None),
+    'jump_label_decorate_focus_bg_color': ('Jump Label Focus Background', 'Background color of the focused jump label entry.', None),
+    'jump_label_decorate_focus_fg_color': ('Jump Label Focus Text Color', 'Text color of the focused jump label entry.', None),
+    'jump_label_decorate_font_desc': ('Jump Label Font', 'Pango font description for the jump label.', None),
+    'jump_label_decorate_padding_x': ('Jump Label Horizontal Padding', 'Horizontal padding inside the jump label in pixels.', None),
+    'jump_label_decorate_padding_y': ('Jump Label Vertical Padding', 'Vertical padding inside the jump label in pixels.', None),
+    'jump_labels': ('Jump Label Characters', 'Characters used to label windows in jump label mode, in order.', None),
+    'layer_animation_type_close': ('Layer Close Animation Type', 'Close animation for layer surfaces. Unset only fades; none disables it.', [('', 'Unset'), ('none', 'None'), ('fade', 'Fade'), ('slide', 'Slide'), ('zoom', 'Zoom')]),
+    'layer_animation_type_open': ('Layer Open Animation Type', 'Open animation for layer surfaces. Unset only fades; none disables it.', [('', 'Unset'), ('none', 'None'), ('fade', 'Fade'), ('slide', 'Slide'), ('zoom', 'Zoom')]),
+    'layer_animations': ('Layer Animations', 'Animate layer-shell surfaces such as panels and notifications. Requires animations.', None),
+    'layer_shadows': ('Layer Shadows', 'Draw shadows under layer-shell surfaces. Requires shadows.', None),
+    'maximized_screen_color': ('Maximized Border', 'Border color for a focused maximized window.', None),
+    'monocle_no_border': ('Monocle No Border', 'Remove borders in monocle layout.', None),
+    'monocle_no_gap': ('Monocle No Gap', 'Remove gaps in monocle layout.', None),
+    'monocle_no_radius': ('Monocle No Radius', 'Remove corner radius in monocle layout.', None),
+    'monocle_right_button_close': ('Right Click to Close', 'Right click on the tab bar closes that window.', None),
+    'monocle_tab_mode': ('Monocle Tab Mode', 'Merge stacked windows into tabs in monocle layout.', None),
+    'mouse_accel_profile': ('Mouse Acceleration Profile', 'Mouse acceleration profile: 0 none, 1 flat, 2 adaptive.', [('0', 'None'), ('1', 'Flat'), ('2', 'Adaptive')]),
+    'mouse_accel_speed': ('Mouse Acceleration Speed', 'Mouse acceleration speed from -1.0 to 1.0.', None),
+    'mouse_click_method': ('Mouse Click Method', 'Click method: 0 no emulation, 1 button areas, 2 clickfinger.', [('0', 'No emulation'), ('1', 'Button areas'), ('2', 'Clickfinger')]),
+    'mouse_left_handed': ('Mouse Left Handed', 'Swap left and right mouse buttons.', None),
+    'mouse_middle_button_emulation': ('Mouse Middle Button Emulation', 'Emit a middle click when both buttons are pressed together.', None),
+    'mouse_natural_scrolling': ('Mouse Natural Scrolling', 'Invert mouse scroll direction.', None),
+    'mouse_scroll_button': ('Mouse Scroll Button', 'Button used for button scrolling on the mouse (272-279).', None),
+    'mouse_scroll_method': ('Mouse Scroll Method', 'Scroll method: 0 disabled, 1 two-finger, 2 edge, 4 button.', [('0', 'Disabled'), ('1', 'Two-finger'), ('2', 'Edge'), ('4', 'Button')]),
+    'mouse_send_events_mode': ('Mouse Send Events Mode', 'Send events: 0 enabled, 1 disabled, 2 disabled with an external pointer.', [('0', 'Enabled'), ('1', 'Disabled'), ('2', 'Disabled with external pointer')]),
+    'new_is_master': ('New Windows as Master', 'New windows open in the master area instead of the stack.', None),
+    'no_border_when_single': ('No Border When Single', 'Remove borders when only one window is visible.', None),
+    'no_radius_when_single': ('No Corner Radius When Single', 'Remove corner radius when only one window is visible.', None),
+    'numlock_on': ('NumLock on Startup', 'Turn on NumLock at startup.', None),
+    'overcircle_center_ratio': ('Overcircle Center Ratio', 'Focused window width as a fraction of usable screen width (0.1-0.9).', None),
+    'overlay_color': ('Overlay Color', 'Border color for overlay windows.', None),
+    'overview_gap_inner': ('Overview Inner Gap', 'Gap between overview cards (0-1000).', None),
+    'overview_gap_outer': ('Overview Outer Gap', 'Gap around the overview layout (0-1000).', None),
+    'repeat_delay': ('Repeat Delay', 'Delay before key repeat starts, in milliseconds.', None),
+    'repeat_rate': ('Repeat Rate', 'Keyboard repeat rate in key presses per second.', None),
+    'root_color': ('Root Background', 'Desktop background behind all windows.', None),
+    'scratchpad_color': ('Scratchpad Border Color', 'Border color for a focused scratchpad window.', None),
+    'scratchpad_cross_monitor': ('Scratchpad Cross Monitor', 'Share the scratchpad pool across all monitors.', None),
+    'scratchpad_height_ratio': ('Scratchpad Height Ratio', "Scratchpad height as a fraction of the monitor (0-1), used when the rule does not set a height. A value of 0 keeps the application's requested height.", None),
+    'scratchpad_width_ratio': ('Scratchpad Width Ratio', "Scratchpad width as a fraction of the monitor (0-1), used when the rule does not set a width. A value of 0 keeps the application's requested width.", None),
+    'scroller_default_proportion': ('Default Proportion', 'Default width proportion for new windows in the scroller layout.', None),
+    'scroller_default_proportion_single': ('Single Window Proportion', 'Width proportion for a tag with one window. Requires scroller_ignore_proportion_single=0.', None),
+    'scroller_focus_center': ('Scroller Focus Center', 'Always center the focused window in the scroller viewport.', None),
+    'scroller_ignore_proportion_single': ('Ignore Single-Window Proportion', 'Ignore scroller_default_proportion_single when the tag has one window.', None),
+    'scroller_prefer_center': ('Scroller Prefer Center', 'Center the focused window only when it was outside the viewport.', None),
+    'scroller_prefer_overspread': ('Prefer Overspread', 'Focused edge window fills unused space. Overrides scroller_focus_center and scroller_prefer_center.', None),
+    'scroller_proportion_preset': ('Proportion Presets', 'Preset width proportions (0.1-1.0) cycled by switch_proportion_preset.', None),
+    'scroller_structs': ('Scroller Side Margin', 'Pixels reserved on each side of the scroller area (0-1000).', None),
+    'send_events_mode': ('Send Events Mode', 'Touch and tablet events: 0 enabled, 1 disabled, 2 disabled with an external pointer.', [('0', 'Enabled'), ('1', 'Disabled'), ('2', 'Disabled with external pointer')]),
+    'shadow_only_floating': ('Floating Shadows Only', 'Only draw shadows for floating windows.', None),
+    'shadows': ('Enable Shadows', 'Render drop shadows behind windows.', None),
+    'shadows_blur': ('Shadow Softness', 'Gaussian blur sigma for softer shadows.', None),
+    'shadows_color': ('Shadow Color', 'Drop shadow color for windows.', None),
+    'shadows_position_x': ('Shadow Offset X', 'Horizontal shadow offset.', None),
+    'shadows_position_y': ('Shadow Offset Y', 'Vertical shadow offset.', None),
+    'shadows_size': ('Shadow Size', 'How far the shadow extends beyond window edges.', None),
+    'single_scratchpad': ('Single Scratchpad', 'Show only one scratchpad window (named or standard) at a time.', None),
+    'sloppy_focus': ('Sloppy Focus', 'Focus follows the mouse pointer.', None),
+    'smart_gaps': ('Smart Gaps', 'Disable gaps when only one tiling window is visible.', None),
+    'snap_distance': ('Snap Distance', 'Maximum snap distance in pixels for floating windows (0-99999).', None),
+    'special_dim': ('Special Tag Dim', 'Background dim level while the special tag is active.', None),
+    'special_gap_inner_horizontal': ('Special Inner Gap Horizontal', 'Horizontal inner gap for windows on the special tag.', None),
+    'special_gap_inner_vertical': ('Special Inner Gap Vertical', 'Vertical inner gap for windows on the special tag.', None),
+    'special_gap_outer_horizontal': ('Special Outer Gap Horizontal', 'Horizontal outer gap for windows on the special tag.', None),
+    'special_gap_outer_vertical': ('Special Outer Gap Vertical', 'Vertical outer gap for windows on the special tag.', None),
+    'special_tag_cross_monitor': ('Special Tag Cross Monitor', "Move windows from other monitors' special tags to the monitor where the special tag is activated and apply the same special-tag layout. Floating windows are rescaled and centered.", None),
+    'split_color': ('Split Indicator', 'Color of the dwindle manual split guide line.', None),
+    'swipe_min_threshold': ('Swipe Minimum Threshold', 'Minimum distance in pixels to trigger a swipe gesture (1-1000).', None),
+    'sync_obj_enable': ('Sync Objects', 'Use DRM sync object timelines. Requires a restart.', None),
+    'tab_bar_decorate_bg_color': ('Tab Bar Background', 'Background color of the tab bar.', None),
+    'tab_bar_decorate_border_color': ('Tab Bar Border Color', 'Border color of the tab bar.', None),
+    'tab_bar_decorate_border_width': ('Tab Bar Border Width', 'Border width of the tab bar in pixels.', None),
+    'tab_bar_decorate_corner_radius': ('Tab Bar Corner Radius', 'Corner radius of the tab bar in pixels.', None),
+    'tab_bar_decorate_fg_color': ('Tab Bar Text Color', 'Text color of the tab bar.', None),
+    'tab_bar_decorate_focus_bg_color': ('Tab Bar Focus Background', 'Background color of the focused tab bar entry.', None),
+    'tab_bar_decorate_focus_fg_color': ('Tab Bar Focus Text Color', 'Text color of the focused tab bar entry.', None),
+    'tab_bar_decorate_font_desc': ('Tab Bar Font', 'Pango font description for the tab bar.', None),
+    'tab_bar_decorate_padding_x': ('Tab Bar Horizontal Padding', 'Horizontal padding inside the tab bar in pixels.', None),
+    'tab_bar_decorate_padding_y': ('Tab Bar Vertical Padding', 'Vertical padding inside the tab bar in pixels.', None),
+    'tab_bar_height': ('Tab Bar Height', 'Height of the tab bar in pixels.', None),
+    'tag_animation_direction': ('Tag Animation Direction', 'Tag-switch animation direction: 1 horizontal, 0 vertical.', [('1', 'Horizontal'), ('0', 'Vertical')]),
+    'tag_carousel': ('Tag Carousel', 'Tags wrap around in a carousel.', None),
+    'tag_gather': ('Gather Tags', 'Compact occupied tags to consecutive numbers starting at 1. The current view follows.', None),
+    'tag_num': ('Number of Tags', 'Number of tags (1-31).', None),
+    'tap_and_drag': ('Tap and Drag', 'Tap and hold to drag items.', None),
+    'tap_to_click': ('Tap to Click', 'Tap the trackpad to click.', None),
+    'title_message_bar_decorate_bg_color': ('Title Bar Background', 'Background color of the title message bar.', None),
+    'title_message_bar_decorate_border_color': ('Title Bar Border Color', 'Border color of the title message bar.', None),
+    'title_message_bar_decorate_border_width': ('Title Bar Border Width', 'Border width of the title message bar in pixels.', None),
+    'title_message_bar_decorate_corner_radius': ('Title Bar Corner Radius', 'Corner radius of the title message bar in pixels.', None),
+    'title_message_bar_decorate_fg_color': ('Title Bar Text Color', 'Text color of the title message bar.', None),
+    'title_message_bar_decorate_focus_bg_color': ('Title Bar Focus Background', 'Background color of the focused title message bar entry.', None),
+    'title_message_bar_decorate_focus_fg_color': ('Title Bar Focus Text Color', 'Text color of the focused title message bar entry.', None),
+    'title_message_bar_decorate_font_desc': ('Title Bar Font', 'Pango font description for the title message bar.', None),
+    'title_message_bar_decorate_padding_x': ('Title Bar Horizontal Padding', 'Horizontal padding inside the title message bar in pixels.', None),
+    'title_message_bar_decorate_padding_y': ('Title Bar Vertical Padding', 'Vertical padding inside the title message bar in pixels.', None),
+    'title_message_bar_gap': ('Title Message Bar Gap', 'Gap between the title message bar and the focused overview card or switcher panel.', None),
+    'title_message_bar_height': ('Title Message Bar Height', 'Height of the title message bar in overcircle and the switcher. 0 hides it.', None),
+    'touch_enable': ('Enable Touch', 'Turn on touchscreen input.', None),
+    'touch_enable_mouse_emulation': ('Touch Mouse Emulation', 'Emulate left-button clicks and drags on surfaces that do not accept touch.', None),
+    'trackpad_accel_profile': ('Trackpad Acceleration Profile', 'Trackpad acceleration profile: 0 none, 1 flat, 2 adaptive.', [('0', 'None'), ('1', 'Flat'), ('2', 'Adaptive')]),
+    'trackpad_accel_speed': ('Trackpad Acceleration Speed', 'Trackpad acceleration speed from -1.0 to 1.0.', None),
+    'trackpad_click_method': ('Trackpad Click Method', 'Click method: 0 no emulation, 1 button areas, 2 clickfinger.', [('0', 'No emulation'), ('1', 'Button areas'), ('2', 'Clickfinger')]),
+    'trackpad_disable_while_typing': ('Disable While Typing', 'Temporarily disable the trackpad while typing.', None),
+    'trackpad_left_handed': ('Trackpad Left Handed', 'Swap left and right trackpad buttons.', None),
+    'trackpad_middle_button_emulation': ('Trackpad Middle Button Emulation', 'Emit a middle click when both buttons are pressed together.', None),
+    'trackpad_natural_scrolling': ('Trackpad Natural Scrolling', 'Invert trackpad scroll direction.', None),
+    'trackpad_scroll_button': ('Trackpad Scroll Button', 'Button used for button scrolling on the trackpad (272-279).', None),
+    'trackpad_scroll_factor': ('Trackpad Scroll Factor', 'Multiplier for trackpad scroll speed (0.1-10.0).', None),
+    'trackpad_scroll_method': ('Trackpad Scroll Method', 'Scroll method: 0 disabled, 1 two-finger, 2 edge, 4 button.', [('0', 'Disabled'), ('1', 'Two-finger'), ('2', 'Edge'), ('4', 'Button')]),
+    'trackpad_send_events_mode': ('Trackpad Send Events Mode', 'Send events: 0 enabled, 1 disabled, 2 disabled with an external pointer.', [('0', 'Enabled'), ('1', 'Disabled'), ('2', 'Disabled with external pointer')]),
+    'unfocused_opacity': ('Unfocused Opacity', 'Opacity of unfocused windows.', None),
+    'urgent_color': ('Urgent Border Color', 'Border color for urgent windows.', None),
+    'view_current_to_back': ('View Current to Back', 'Viewing the current tag switches to the previously viewed tag.', None),
+    'warp_cursor': ('Warp Cursor', 'Warp the pointer to the center of the focused window when focus changes by keybinding.', None),
+    'xkb_rules_layout': ('XKB Layout', "Keyboard layout codes, for example 'us' or 'us,ru'.", None),
+    'xkb_rules_model': ('XKB Model', 'Keyboard model for XKB.', None),
+    'xkb_rules_options': ('XKB Options', "XKB options, for example 'ctrl:nocaps'.", None),
+    'xkb_rules_rules': ('XKB Rules', 'XKB rules file.', None),
+    'xkb_rules_variant': ('XKB Variant', 'Keyboard layout variant.', None),
+    'xwayland_ignore_scale': ('Ignore XWayland Scale', 'Make XWayland use physical pixels instead of the output scale.', None),
+    'xwayland_persistence': ('XWayland Persistence', 'Keep XWayland running even when no X11 clients are active.', None),
+    'zoom_end_ratio': ('Zoom End Ratio', 'Final scale for zoom animations (0.1-1.0).', None),
+    'zoom_initial_ratio': ('Zoom Initial Ratio', 'Initial scale for zoom animations (0.1-1.0).', None),
+}
+
+BINDING_CATEGORIES = {
+    'centerwin': 'window',
+    'chvt': 'system',
+    'comboview': 'tag',
+    'create_virtual_output': 'system',
+    'destroy_all_virtual_output': 'system',
+    'disable_monitor': 'monitor',
+    'dwindle_split_horizontal': 'layout',
+    'dwindle_split_vertical': 'layout',
+    'dwindle_toggle_current_split': 'layout',
+    'dwindle_toggle_split_direction': 'layout',
+    'enable_monitor': 'monitor',
+    'enteroverview': 'layout',
+    'exchange_client': 'focus',
+    'exchange_stack_client': 'focus',
+    'focus_window_or_workspace': 'focus',
+    'focusdir': 'focus',
+    'focusid': 'focus',
+    'focuslast': 'focus',
+    'focusmon': 'monitor',
+    'focusstack': 'focus',
+    'groupfocus': 'group',
+    'groupjoin': 'group',
+    'groupleave': 'group',
+    'incgaps': 'appearance',
+    'incnmaster': 'layout',
+    'killclient': 'window',
+    'leaveoverview': 'layout',
+    'load_config_file': 'system',
+    'minimized': 'scratchpad',
+    'move_client': 'focus',
+    'moveresize': 'floating',
+    'movewin': 'floating',
+    'overcircle': 'layout',
+    'quit': 'system',
+    'reload_config': 'system',
+    'resizewin': 'floating',
+    'restore_minimized': 'scratchpad',
+    'scroller_stack': 'layout',
+    'set_proportion': 'layout',
+    'setkeymode': 'bindings',
+    'setlayout': 'layout',
+    'setmfact': 'layout',
+    'setoption': 'system',
+    'sleep_monitor': 'monitor',
+    'sleep_toggle_monitor': 'monitor',
+    'smartkillclient': 'window',
+    'smartmovewin': 'floating',
+    'smartresizewin': 'floating',
+    'spawn': 'system',
+    'spawn_on_empty': 'system',
+    'spawn_shell': 'system',
+    'switch_keyboard_layout': 'input',
+    'switch_layout': 'layout',
+    'switch_proportion_preset': 'layout',
+    'switcher': 'focus',
+    'tag': 'tag',
+    'tag_special_silent': 'tag',
+    'tag_special_tag': 'tag',
+    'tagcrossmon': 'tag',
+    'tagmon': 'monitor',
+    'tagsilent': 'tag',
+    'tagtoleft': 'tag',
+    'tagtoright': 'tag',
+    'toggle_all_floating': 'window',
+    'toggle_monitor': 'monitor',
+    'toggle_named_scratchpad': 'scratchpad',
+    'toggle_render_border': 'appearance',
+    'toggle_scratchpad': 'scratchpad',
+    'toggle_special_tag': 'tag',
+    'toggle_trackpad_enable': 'input',
+    'togglefakefullscreen': 'window',
+    'togglefloating': 'window',
+    'togglefullscreen': 'window',
+    'togglegaps': 'appearance',
+    'toggleglobal': 'window',
+    'togglegroupbar': 'group',
+    'togglehdr': 'monitor',
+    'togglejump': 'layout',
+    'togglemaximizescreen': 'window',
+    'toggleoverlay': 'window',
+    'toggleoverview': 'layout',
+    'toggletag': 'tag',
+    'toggleview': 'tag',
+    'view': 'tag',
+    'view_insert': 'tag',
+    'viewcrossmon': 'tag',
+    'viewnext_have_client': 'tag',
+    'viewprev_have_client': 'tag',
+    'viewtoleft': 'tag',
+    'viewtoleft_have_client': 'tag',
+    'viewtoright': 'tag',
+    'viewtoright_have_client': 'tag',
+    'wakeup_monitor': 'monitor',
+    'zoom': 'focus',
+}
+
+BINDING_CATEGORY_ORDER = ['window', 'scratchpad', 'focus', 'floating', 'group', 'tag', 'monitor', 'layout', 'input', 'bindings', 'appearance', 'system']
+
+BINDING_CATEGORY_LABELS = {
+    'window': 'Window Management',
+    'scratchpad': 'Scratchpad',
+    'focus': 'Focus & Movement',
+    'floating': 'Floating Windows',
+    'group': 'Window Groups',
+    'tag': 'Tags',
+    'monitor': 'Monitors',
+    'layout': 'Layouts',
+    'input': 'Input',
+    'bindings': 'Bindings',
+    'appearance': 'Appearance',
+    'system': 'System',
+}
+
+# Web-UI units shown after slider readouts.
+WEB_UNITS = {
+    "cursor_size": "px",
+    "repeat_rate": "cps",
+    "repeat_delay": "ms",
+    "gap_inner_horizontal": "px", "gap_inner_vertical": "px",
+    "gap_outer_horizontal": "px", "gap_outer_vertical": "px",
+    "border_px": "px", "border_radius": "px",
+    "blur_params_radius": "px", "blur_params_num_passes": "",
+    "shadows_size": "px", "shadows_blur": "px",
+    "shadows_position_x": "px", "shadows_position_y": "px",
+    "animation_duration_open": "ms", "animation_duration_close": "ms",
+    "animation_duration_move": "ms", "animation_duration_focus": "ms",
+    "animation_duration_tag": "ms",
+    "scratchpad_width_ratio": "", "scratchpad_height_ratio": "",
+}
+
+# Mango int-enums the web UI renders as labelled dropdowns.
+WEB_ENUM_KEYS = {
+    "mouse_accel_profile", "trackpad_accel_profile",
+    "mouse_scroll_method", "trackpad_scroll_method",
+    "mouse_scroll_button", "mouse_click_method", "trackpad_click_method",
+    "mouse_send_events_mode",
+}
+
+
+def apply_web_labels():
+    """Adopt the official web settings' labels, descriptions and enum
+    dropdowns (option labels while the config keeps storing values)."""
+    for opts in SCHEMA.values():
+        for opt in opts:
+            field = WEB_FIELDS.get(opt.key)
+            if field is None:
+                continue
+            label, desc, options = field
+            if label:
+                opt.label = label
+            if desc:
+                opt.desc = desc
+            if opt.type == OptDef.CHOICE and options:
+                values = [v for v, _l in options]
+                # keep the engine's validation list in sync with web options
+                if values:
+                    opt.choices = values
+                    opt.choice_labels = dict(options)
+            elif opt.key in WEB_ENUM_KEYS and options:
+                # Mango stores 0/1/2; the web renders labelled dropdowns.
+                if opt.type == OptDef.INT:
+                    opt.type = OptDef.CHOICE
+                    opt.min = None
+                    opt.max = None
+                opt.choices = [v for v, _l in options]
+                labels = dict(options)
+                # Older MangoWM defaults (e.g. accel profile -1) must remain
+                # selectable and valid.
+                if str(opt.default) not in opt.choices:
+                    opt.choices.insert(0, str(opt.default))
+                    labels[str(opt.default)] = "Default"
+                opt.choice_labels = labels
+
+
+apply_web_labels()
+
 SCHEMA_OPTIONS = {}
 for _opts in SCHEMA.values():
     for _o in _opts:
@@ -2072,8 +2495,10 @@ def run_gui(args):
                               adjustment=adj, draw_value=False, width_request=110)
                 w.set_digits(0 if opt.type == OptDef.INT else 2)
                 readout = Gtk.Label(
-                    label=("%d" % round(cur)) if opt.type == OptDef.INT
-                    else ("%.2f" % cur).rstrip("0").rstrip("."))
+                    label=(("%d" % round(cur)) if opt.type == OptDef.INT
+                           else ("%.2f" % cur).rstrip("0").rstrip("."))
+                          + ((" " + WEB_UNITS[opt.key])
+                             if WEB_UNITS.get(opt.key) else ""))
                 readout.set_width_chars(5)
                 readout.get_style_context().add_class("ms-readout")
                 wrap.pack_start(w, False, False, 0)
@@ -2081,9 +2506,12 @@ def run_gui(args):
 
                 def update_readout(_adj):
                     v = adj.get_value()
-                    readout.set_text(
-                        ("%d" % round(v)) if opt.type == OptDef.INT
-                        else ("%.2f" % v).rstrip("0").rstrip("."))
+                    text = (("%d" % round(v)) if opt.type == OptDef.INT
+                            else ("%.2f" % v).rstrip("0").rstrip("."))
+                    unit = WEB_UNITS.get(opt.key)
+                    if unit:
+                        text += " " + unit
+                    readout.set_text(text)
 
                 def commit(_src):
                     update_readout(adj)
@@ -2100,6 +2528,23 @@ def run_gui(args):
                           (GLib.timeout_add(400, commit, None), False)[1])
                 return wrap
             if opt.type == OptDef.CHOICE:
+                # Labelled dropdown: the combo shows display labels while the
+                # config keeps storing the raw values (web-settings style).
+                if opt.choice_labels:
+                    store = Gtk.ListStore(str, str)
+                    for value in opt.choices:
+                        store.append([opt.choice_labels.get(value, value), value])
+                    w = Gtk.ComboBox(model=store)
+                    cell = Gtk.CellRendererText()
+                    w.pack_start(cell, True)
+                    w.add_attribute(cell, "text", 0)
+                    cur = self._current(opt) or opt.default
+                    if cur not in opt.choices:
+                        cur = opt.default
+                    index = opt.choices.index(cur) if cur in opt.choices else 0
+                    w.set_active(index)
+                    w.connect("changed", self._on_choice, opt)
+                    return w
                 w = Gtk.ComboBoxText()
                 for c in opt.choices:
                     w.append_text(c)
@@ -2161,6 +2606,12 @@ def run_gui(args):
                 self._apply(opt, ("%f" % v).rstrip("0").rstrip("."))
 
         def _on_choice(self, combo, opt):
+            if opt.choice_labels:
+                model = combo.get_model()
+                value = model[combo.get_active()][1]
+                if value is not None:
+                    self._apply(opt, value)
+                return
             text = combo.get_active_text()
             if text:
                 self._apply(opt, text)
@@ -2303,8 +2754,16 @@ def run_gui(args):
             if not records:
                 self.add_note("No %s entries yet." % self.record_name)
 
-        def after_change(self):
-            self.app.rule_file(self.rule_file_attr()).save()
+        def _apply_and_record(self, mutation):
+            """Apply a RuleFile mutation and push an undoable change."""
+            rf = self.app.rule_file(self.rule_file_attr())
+            before = list(rf.raw_lines)
+            mutation()
+            after = list(rf.raw_lines)
+            self.app.record_change(
+                lambda: self.app.rule_restore(self.rule_file_attr(), before),
+                lambda: self.app.rule_restore(self.rule_file_attr(), after))
+            rf.save()
             self.clear_dirty()
             self.rebuild()
 
@@ -2312,8 +2771,9 @@ def run_gui(args):
             self.edit_dialog(on_ok=self._added)
 
         def _added(self, values):
-            self.app.rule_file(self.rule_file_attr()).add(self.record_name, values)
-            self.after_change()
+            self._apply_and_record(
+                lambda: self.app.rule_file(self.rule_file_attr())
+                        .add(self.record_name, values))
 
         def on_edit(self, _btn, index):
             fields = self.app.rule_file(self.rule_file_attr()).raw_lines[index][1][1]
@@ -2321,14 +2781,19 @@ def run_gui(args):
                              on_ok=lambda v: self._edited(index, v))
 
         def _edited(self, index, values):
-            self.app.rule_file(self.rule_file_attr()).update(index, values)
-            self.after_change()
+            self._apply_and_record(
+                lambda: self.app.rule_file(self.rule_file_attr())
+                        .update(index, values))
 
         def on_delete(self, _btn, index):
-            self.app.rule_file(self.rule_file_attr()).remove(index)
-            self.after_change()
+            self._apply_and_record(
+                lambda: self.app.rule_file(self.rule_file_attr()).remove(index))
 
-    class KeybindsPage(RuleListPage):
+    class KeybindsPage(PageBase):
+        """Web-style bindings browser: category filter chips, action badges,
+        command chips and keycap chips (Super + R), grouped by dispatcher
+        category."""
+
         page_key = "bindings"
         record_name = "bind"
 
@@ -2338,29 +2803,285 @@ def run_gui(args):
         def field_labels(self):
             return ["Modifiers (SUPER, SHIFT\u2026)", "Key", "Action", "Arguments"]
 
-        def placeholder(self):
-            return "e.g. SUPER, Return, spawn, foot"
-
-        def add_from_entry(self):
-            text = self.add_entry.get_text().strip()
-            if not text:
-                return
-            parts = [p.strip() for p in text.split(",") if p.strip()]
-            if len(parts) < 3:
-                self.app.error_dialog("Need at least modifiers, key and action, "
-                                      "separated by commas:\n"
-                                      "SUPER, Return, spawn, foot")
-                return
-            while len(parts) < 4:
-                parts.append("")
-            self.add_entry.set_text("")
-            self._added(parts)
-
         def build(self):
-            super().build()
-            self.add_note("Separate fields with commas: modifiers, key, action, "
-                          "arguments. Conflicting binds (same modifiers and key) "
-                          "are flagged. Ctrl+R sends the reload to MangoWM.")
+            self.selected_category = None       # None = All
+            self.search_text = ""
+
+            # Top bar: "search in all modes" + orange New Binding button.
+            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            self.filter_entry = Gtk.SearchEntry(
+                placeholder_text="Search in all modes\u2026")
+            self.filter_entry.connect("search-changed", self.on_filter_changed)
+            bar.pack_start(self.filter_entry, True, True, 0)
+            new_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            new_box.pack_start(Gtk.Image.new_from_icon_name(
+                "list-add-symbolic", Gtk.IconSize.BUTTON), False, False, 0)
+            new_box.pack_start(Gtk.Label(label="New Binding"), False, False, 0)
+            new_btn = Gtk.Button()
+            new_btn.add(new_box)
+            new_btn.get_style_context().add_class("suggested-action")
+            new_btn.set_tooltip_text("Add a keybinding")
+            new_btn.connect("clicked", self.on_add)
+            bar.pack_end(new_btn, False, False, 0)
+            self.content.pack_start(bar, False, False, 0)
+
+            # Category filter chips.
+            self.chips_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                     spacing=6)
+            self.content.pack_start(self.chips_box, False, False, 0)
+
+            self.count_label = Gtk.Label(xalign=0)
+            self.count_label.get_style_context().add_class("ms-count")
+            self.content.pack_start(self.count_label, False, False, 0)
+
+            self.cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                     spacing=12)
+            self.content.pack_start(self.cards_box, True, True, 0)
+            self.add_note("Ctrl+R sends the reload to MangoWM after saving. "
+                          "Conflicting binds (same modifiers and key) are "
+                          "flagged with \u26a0.")
+            self.rebuild()
+
+        # -- helpers -------------------------------------------------------
+        def binds(self):
+            return self.app.rule_file("bind").records("bind")
+
+        def category_of(self, fields):
+            action = fields[2] if len(fields) > 2 else ""
+            return BINDING_CATEGORIES.get(action, "system")
+
+        def on_filter_changed(self, entry):
+            self.search_text = entry.get_text().lower().strip()
+            self.rebuild()
+
+        def on_chip_toggled(self, btn, category):
+            if not btn.get_active():
+                return
+            # Single-select chips: switch every other chip off.
+            for child in self.chips_box.get_children():
+                if child is not btn and isinstance(child, Gtk.ToggleButton) \
+                        and child.get_active():
+                    child.set_active(False)
+            self.selected_category = None if category is None else category
+            self.rebuild()
+
+        # -- rendering -----------------------------------------------------
+        def rebuild(self):
+            records = self.binds()
+            conflicts = dict(RuleFile.bind_conflicts(records))
+            needle = self.search_text
+
+            def matches(fields):
+                if needle and not needle in ",".join(fields).lower():
+                    return False
+                if self.selected_category and \
+                        self.category_of(fields) != self.selected_category:
+                    return False
+                return True
+
+            shown = [rec for rec in records if matches(rec[1])]
+
+            # Category chips (All + every category that exists in the file).
+            present = []
+            for rec in records:
+                cat = self.category_of(rec[1])
+                if cat not in present:
+                    present.append(cat)
+            for child in list(self.chips_box.get_children()):
+                self.chips_box.remove(child)
+            self._make_chip(None, "All", True)
+            for cat in BINDING_CATEGORY_ORDER:
+                if cat in present:
+                    self._make_chip(cat, BINDING_CATEGORY_LABELS.get(cat, cat),
+                                    False)
+            for cat in present:
+                if cat not in BINDING_CATEGORY_ORDER:
+                    self._make_chip(cat, BINDING_CATEGORY_LABELS.get(cat, cat),
+                                    False)
+            self.chips_box.show_all()
+
+            self.count_label.set_markup(
+                "<small>Showing %d binding%s%s</small>"
+                % (len(shown), "" if len(shown) == 1 else "s",
+                   (" for \u201c%s\u201d" % GLib.markup_escape_text(needle))
+                   if needle else ""))
+
+            for child in list(self.cards_box.get_children()):
+                self.cards_box.remove(child)
+            if not shown:
+                empty = Gtk.Label(xalign=0)
+                empty.set_markup("<span alpha='60%%'>%s</span>" %
+                                 GLib.markup_escape_text(
+                                     "No bindings match." if needle or
+                                     self.selected_category
+                                     else "No bindings defined yet."))
+                self.cards_box.pack_start(empty, False, False, 8)
+            grouped = {}
+            for index, fields in shown:
+                grouped.setdefault(self.category_of(fields), []).append(
+                    (index, fields))
+            for cat in BINDING_CATEGORY_ORDER + [c for c in grouped
+                                                 if c not in BINDING_CATEGORY_ORDER]:
+                if cat not in grouped:
+                    continue
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                card.get_style_context().add_class("ms-card")
+                head = Gtk.Label(xalign=0)
+                head.set_markup(GLib.markup_escape_text(
+                    BINDING_CATEGORY_LABELS.get(cat, cat).upper()))
+                head.get_style_context().add_class("ms-group-title")
+                head.set_margin_start(14)
+                head.set_margin_top(10)
+                head.set_margin_bottom(8)
+                card.pack_start(head, False, False, 0)
+                card.pack_start(Gtk.Separator(), False, False, 0)
+                listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+                listbox.get_style_context().add_class("ms-rows")
+                card.pack_start(listbox, False, False, 0)
+                for index, fields in grouped[cat]:
+                    listbox.add(self._make_bind_row(index, fields, conflicts))
+                self.cards_box.pack_start(card, False, False, 0)
+            self.cards_box.show_all()
+
+        def _make_chip(self, category, label, is_all):
+            btn = Gtk.ToggleButton(label=label)
+            btn.get_style_context().add_class("ms-chip")
+            if (is_all and self.selected_category is None) or \
+                    (not is_all and self.selected_category == category):
+                btn.set_active(True)
+            btn.connect("toggled", self.on_chip_toggled,
+                        None if is_all else category)
+            self.chips_box.pack_start(btn, False, False, 0)
+
+        def _make_bind_row(self, index, fields, conflicts):
+            row = Gtk.ListBoxRow()
+            row.get_style_context().add_class("ms-row")
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_start(10)
+            box.set_margin_end(10)
+            box.set_margin_top(7)
+            box.set_margin_bottom(7)
+            row.add(box)
+
+            # Action badge.
+            action = fields[2] if len(fields) > 2 else ""
+            badge = Gtk.Label(label=action or "?")
+            badge.get_style_context().add_class("ms-badge")
+            box.pack_start(badge, False, False, 0)
+
+            # Argument chips ("command" + the command for spawn-like binds).
+            args = fields[3:] if len(fields) > 3 else []
+            args = [a for a in args if a != ""]
+            if args:
+                if action in ("spawn", "spawn_once"):
+                    lbl = Gtk.Label(label="command")
+                    lbl.get_style_context().add_class("ms-cmd-label")
+                    box.pack_start(lbl, False, False, 0)
+                for arg in args[:3]:
+                    chip = Gtk.Label(label=arg[:48])
+                    chip.get_style_context().add_class("ms-cmd")
+                    box.pack_start(chip, False, False, 0)
+
+            spacer = Gtk.Box()
+            spacer.set_hexpand(True)
+            box.pack_start(spacer, True, True, 0)
+
+            if index in conflicts:
+                warn = Gtk.Label()
+                warn.set_markup("<span foreground='orange'>\u26a0</span>")
+                warn.set_tooltip_text(conflicts[index])
+                box.pack_start(warn, False, False, 0)
+
+            # Keycaps: modifiers + key as chips joined with "+".
+            mods = fields[0] if fields and fields[0] else ""
+            key = fields[1] if len(fields) > 1 and fields[1] else ""
+            tokens = [t for t in re.split(r"[ +]", mods) if t] + [key] if key else \
+                [t for t in re.split(r"[ +]", mods) if t]
+            for i, token in enumerate(tokens):
+                if i:
+                    plus = Gtk.Label(label="+")
+                    plus.get_style_context().add_class("ms-plus")
+                    box.pack_start(plus, False, False, 0)
+                cap = Gtk.Label(label=token.capitalize()
+                                if token.lower() in ("super", "shift", "ctrl",
+                                                     "alt", "print", "lock")
+                                else token)
+                cap.get_style_context().add_class("ms-key")
+                box.pack_start(cap, False, False, 0)
+
+            edit = Gtk.Button.new_from_icon_name("document-edit-symbolic",
+                                                 Gtk.IconSize.MENU)
+            edit.set_relief(Gtk.ReliefStyle.NONE)
+            edit.get_style_context().add_class("ms-reset")
+            edit.set_tooltip_text("Edit")
+            edit.connect("clicked", self.on_edit, index)
+            box.pack_start(edit, False, False, 0)
+            delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
+                                                   Gtk.IconSize.MENU)
+            delete.set_relief(Gtk.ReliefStyle.NONE)
+            delete.get_style_context().add_class("ms-reset")
+            delete.set_tooltip_text("Delete")
+            delete.connect("clicked", self.on_delete, index)
+            box.pack_start(delete, False, False, 0)
+            return row
+
+        # -- editing -------------------------------------------------------
+        def edit_dialog(self, fields=None, on_ok=None):
+            dlg = Gtk.Dialog(title="Binding",
+                             transient_for=self.get_toplevel(), modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                            "_Save", Gtk.ResponseType.OK)
+            grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+            grid.set_border_width(12)
+            entries = []
+            for i, label in enumerate(self.field_labels()):
+                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
+                entry = Gtk.Entry(width_chars=32)
+                entry.set_text(fields[i] if fields and i < len(fields) else "")
+                grid.attach(entry, 1, i, 1, 1)
+                entries.append(entry)
+            dlg.get_content_area().add(grid)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK:
+                values = [e.get_text().strip() for e in entries]
+                dlg.destroy()
+                on_ok(values)
+                return True
+            dlg.destroy()
+            return False
+
+        def on_add(self, _btn):
+            self.edit_dialog(on_ok=self._added)
+
+        def _added(self, values):
+            self._apply_and_record(
+                lambda: self.app.rule_file("bind").add("bind", values))
+
+        def on_edit(self, _btn, index):
+            fields = self.app.rule_file("bind").raw_lines[index][1][1]
+            self.edit_dialog(fields=list(fields),
+                             on_ok=lambda v: self._edited(index, v))
+
+        def _edited(self, index, values):
+            self._apply_and_record(
+                lambda: self.app.rule_file("bind").update(index, values))
+
+        def on_delete(self, _btn, index):
+            self._apply_and_record(
+                lambda: self.app.rule_file("bind").remove(index))
+
+        def _apply_and_record(self, mutation):
+            """Apply a bind mutation and push an undoable change."""
+            rf = self.app.rule_file("bind")
+            before = list(rf.raw_lines)
+            mutation()
+            after = list(rf.raw_lines)
+            self.app.record_change(
+                lambda: self.app.rule_restore("bind", before),
+                lambda: self.app.rule_restore("bind", after))
+            rf.save()
+            self.clear_dirty()
+            self.rebuild()
 
     class WindowRulesPage(RuleListPage):
         page_key = "window-rules"
@@ -2396,8 +3117,9 @@ def run_gui(args):
             self.edit_dialog(on_ok=self._added_once)
 
         def _added_once(self, values):
-            self.app.rule_file("rule").add("window_rule_once", values)
-            self.after_change()
+            self._apply_and_record(
+                lambda: self.app.rule_file("rule").add("window_rule_once",
+                                                        values))
 
     class MonitorsPage(RuleListPage):
         page_key = "monitor-rules"
@@ -2437,10 +3159,17 @@ def run_gui(args):
                                       "(or mmsg is not installed).")
                 return
             rf = self.app.rule_file("monitor")
-            for name, _desc in monitors:
-                if not any(rec[1] and rec[1][0] == name for rec in rf.records("monitor")):
-                    rf.add("monitor", [name, "1", "0", "0", "-1", "-1", "1", "0", "normal"])
-            self.after_change()
+            existing = set(rec[1][0] for rec in rf.records("monitor") if rec[1])
+            new = [name for name, _desc in monitors if name not in existing]
+            if not new:
+                return
+
+            def add_all():
+                for name in new:
+                    rf.add("monitor", [name, "1", "0", "0", "-1", "-1", "1",
+                                       "0", "normal"])
+
+            self._apply_and_record(add_all)
 
     class TagRulesPage(RuleListPage):
         page_key = "tag-rules"
@@ -4030,6 +4759,54 @@ def run_gui(args):
                 .ms-row-desc { color: alpha(%(muted_fg)s, 0.75); }
                 .ms-state-on { color: %(primary)s; font-weight: 700; }
                 .ms-state-off { color: alpha(%(muted_fg)s, 0.45); font-weight: 700; }
+                .ms-count { color: alpha(%(muted_fg)s, 0.85); }
+                .ms-chip {
+                    background-color: transparent;
+                    border: 1px solid alpha(%(border)s, 0.9);
+                    border-radius: 9999px;
+                    color: %(muted_fg)s;
+                    padding: 2px 10px;
+                    font-size: 92%%;
+                }
+                .ms-chip:hover { background-color: alpha(%(fg)s, 0.06); }
+                .ms-chip:checked {
+                    background-color: %(primary)s;
+                    color: %(primary_fg)s;
+                    border-color: %(primary)s;
+                    font-weight: 600;
+                }
+                .ms-badge {
+                    background-color: alpha(%(primary)s, 0.22);
+                    color: %(primary)s;
+                    border-radius: 6px;
+                    padding: 2px 8px;
+                    font-family: monospace;
+                    font-weight: 600;
+                }
+                .ms-cmd-label { color: alpha(%(muted_fg)s, 0.9); font-size: 92%%; }
+                .ms-cmd {
+                    background-color: alpha(%(fg)s, 0.07);
+                    border-radius: 6px;
+                    padding: 2px 8px;
+                    font-family: monospace;
+                    font-size: 92%%;
+                    color: %(fg)s;
+                }
+                .ms-key {
+                    background-color: alpha(%(fg)s, 0.10);
+                    border: 1px solid alpha(%(border)s, 0.9);
+                    border-radius: 6px;
+                    padding: 1px 7px;
+                    font-family: monospace;
+                    font-size: 92%%;
+                    color: %(fg)s;
+                }
+                .ms-plus { color: alpha(%(muted_fg)s, 0.55); }
+                .ms-group-title {
+                    color: %(muted_fg)s;
+                    font-weight: 700;
+                    font-size: 88%%;
+                }
                 .ms-readout { color: %(fg)s; font-family: monospace; }
                 .ms-reset { color: alpha(%(muted_fg)s, 0.7); padding: 3px;
                             background: transparent; border: none;
