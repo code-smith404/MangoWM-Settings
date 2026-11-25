@@ -20,24 +20,33 @@ fi
 
 work=${ALPINE_BUILD_DIR:-/tmp/mango-abuild}
 rm -rf "$work"
-mkdir -p "$work/aports/testing/mango-settings"
+mkdir -p "$work/aports/testing/mango-settings" "$work/srcdest"
 cp -f "$root/packaging/alpine/APKBUILD" "$work/aports/testing/mango-settings/APKBUILD"
-git -C "$root" archive --prefix="MangoWM-Settings-$version/" HEAD \
-    | gzip -9 > "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz"
-chown -R builder "$work"
 
-su builder -s /bin/sh -c "abuild-keygen -a -n >/dev/null"
-cp -f /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
-# Put the locally built tarball into abuild's source cache (SRCDEST): abuild
-# only skips downloading a source URL when the file is already there, and the
-# release tag (and thus its tarball URL) does not exist before the release.
-mkdir -p "$work/srcdest"
+# Build the source tarball exactly like `git archive` for the release tag
+# (deterministic, no timestamps) and record its real sha512 in the APKBUILD so
+# `abuild checksum` never has to download the - not yet existing - release tag.
+git -C "$root" archive --prefix="MangoWM-Settings-$version/" HEAD \
+    | gzip -n > "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz"
+sum=$(sha512sum "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz" \
+    | cut -d" " -f1)
+sed -i "s|^sha512sums=.*|sha512sums=\"$sum\"|" \
+    "$work/aports/testing/mango-settings/APKBUILD"
 cp -f "$work/aports/testing/mango-settings/mango-settings-$version.tar.gz" \
     "$work/srcdest/"
-echo "SRCDEST=$work/srcdest" > /home/builder/.abuild/abuild.conf
+
+chown -R builder "$work"
+su builder -s /bin/sh -c "abuild-keygen -a -n >/dev/null"
+cp -f /home/builder/.abuild/*.rsa.pub /etc/apk/keys/
+
+# Serve the tarball to abuild from a local mirror so nothing is fetched over
+# the network: DISTFILES_MIRROR is tried first by abuild (plain cp) and
+# SRCDEST is where the cached copy is validated against sha512sums.
+printf 'SRCDEST=%s\nDISTFILES_MIRROR=%s\n' "$work/srcdest" "$work/srcdest" \
+    > /home/builder/.abuild/abuild.conf
 chown -R builder "$work" /home/builder/.abuild
 
-su builder -s /bin/sh -c "export REPODEST='$work/packages'; cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
+su builder -s /bin/sh -c "export REPODEST='$work/packages' DISTFILES_MIRROR='$work/srcdest'; cd '$work/aports/testing/mango-settings' && abuild checksum && abuild -r"
 
 mkdir -p "$out"
 find "$work/packages" -name 'mango-settings-*.apk' -exec cp -f {} "$out/" \;
