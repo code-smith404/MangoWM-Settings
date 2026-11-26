@@ -6,7 +6,7 @@
 %global debug_package %{nil}
 
 Name:           mango-settings
-Version:        2.3.0
+Version:        2.4.0
 Release:        0
 Summary:        Settings manager for the MangoWM Wayland compositor
 

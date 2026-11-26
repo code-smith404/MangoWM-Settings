@@ -2,7 +2,7 @@
 # Build with: abuild -r   (from this directory)
 # Submit to:  https://gitlab.alpinelinux.org/alpine/aports
 pkgname=mango-settings
-pkgver=2.3.0
+pkgver=2.4.0
 pkgrel=0
 pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor"
 url="https://github.com/code-smith404/MangoWM-Settings"

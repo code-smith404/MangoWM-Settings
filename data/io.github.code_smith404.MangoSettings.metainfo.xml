@@ -29,6 +29,17 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.4.0" date="2026-11-26">
+      <description>
+        <p>Full MangoWM option coverage: every option the compositor parses
+        is now editable, with new pages for bars and decorations, jump
+        labels, overview and hotarea, special tag, gestures, advanced
+        rendering and per-device input rules. Rule editors were rewritten
+        for Mango's key:value record syntax, external config changes are
+        detected with a reload banner, and the setup menu gained a backup
+        manager plus portable config export and import.</p>
+      </description>
+    </release>
     <release version="2.3.0" date="2025-11-24">
       <description>
         <p>Redesigned to match the official MangoWM web settings: sidebar with

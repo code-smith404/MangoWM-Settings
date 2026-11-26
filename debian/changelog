@@ -1,3 +1,18 @@
+mango-settings (2.4.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Schema now covers every top-level option MangoWM parses (bars and
+    decorations, jump labels, overview and hotarea, special tag, gestures,
+    advanced rendering, per-device rules).
+  * Rule editors rewritten for Mango's key:value record syntax with
+    validation (monitor, tag, window, layer, device rules).
+  * External config change detection with a reload banner, backup manager,
+    config export/import, per-page reset to defaults, custom accent color.
+  * Inline validation feedback instead of modal dialogs, debounced search,
+    and a headless --selftest for CI.
+
+ -- Harikesh Verma <code-smith404@users.noreply.github.com>  Wed, 26 Nov 2026 12:00:00 +0000
+
 mango-settings (2.3.0-1) unstable; urgency=medium
 
   * New upstream release.

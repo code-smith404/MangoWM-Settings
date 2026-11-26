@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 APP_ID = "io.github.code_smith404.MangoSettings"
 APP_NAME = "Mango Settings"
 
@@ -75,15 +75,9 @@ class Issue(object):
             where = self.path
             if self.lineno is not None:
                 where += ":%d" % self.lineno
-        return "%s: %s%s: %s" % (
+        return "%s[%s]: %s" % (
             "error" if self.severity == Issue.ERROR else "warning",
-            " (%s)" % where if where else "",
-            "",  # kept for layout symmetry
-            self.message,
-        ).replace("  ", " ").replace(": :", ": ") if False else "%s%s%s: %s" % (
-            "error" if self.severity == Issue.ERROR else "warning",
-            " [%s]" % where if where else "",
-            "", self.message,
+            where, self.message,
         )
 
 
@@ -418,6 +412,12 @@ NAV_PAGES = [
     ("cursor", "appearance", "Cursor",
      ["input-mouse", "preferences-desktop-peripherals"],
      "Cursor theme, size and auto-hide behaviour.", "schema"),
+    ("bars", "appearance", "Bars & Decorations",
+     ["preferences-desktop-theme", "window-new"],
+     "Group bar, tab bar and title message bar styling.", "schema"),
+    ("jump-labels", "appearance", "Jump Labels",
+     ["go-jump", "view-grid"],
+     "Jump label mode (jump to a window by pressing its label).", "schema"),
 
     ("layout", None, "Layout",
      ["view-grid", "view-paged"], "", "group"),
@@ -442,6 +442,9 @@ NAV_PAGES = [
     ("trackpad", "input-devices", "Trackpad",
      ["input-touchpad", "input-tablet", "input-mouse"],
      "Tapping, scrolling and disable-while-typing.", "schema"),
+    ("device-rules", "input-devices", "Device Rules",
+     ["input-gaming", "preferences-desktop-peripherals"],
+     "Per-device input settings (mouse, trackpad, keyboard).", "records-kv"),
 
     ("animations", None, "Animations",
      ["media-playback-start", "preferences-system-windows"], "", "group"),
@@ -467,6 +470,16 @@ NAV_PAGES = [
     ("scratchpad", "behaviour", "Scratchpad",
      ["window-new", "preferences-system-windows"],
      "The hidden scratchpad window and its size.", "schema"),
+    ("overview", "behaviour", "Overview & Hotarea",
+     ["view-grid", "zoom-fit-best"],
+     "Workspace overview, switcher and the corner hotarea.", "schema"),
+    ("special-tag", "behaviour", "Special Tag",
+     ["view-paged", "starred"],
+     "The special tag: a spare workspace with its own gaps and dimming.",
+     "schema"),
+    ("gestures", "behaviour", "Gestures",
+     ["input-touchpad", "preferences-desktop-peripherals"],
+     "Touchpad swipe gestures for tags and the overview.", "schema"),
 
     ("rules", None, "Rules",
      ["window-new", "text-x-generic"], "", "group"),
@@ -500,6 +513,10 @@ NAV_PAGES = [
     ("files", "desktop", "Config Files",
      ["text-x-generic", "document-open", "accessories-text-editor"],
      "Open and edit every loaded configuration file as text.", "files"),
+    ("advanced", "desktop", "Advanced",
+     ["emblem-system", "applications-system"],
+     "Tearing, HDR, XWayland, idle inhibit and other expert options.",
+     "schema"),
     ("system", "desktop", "System Info",
      ["computer", "dialog-information"],
      "Compositor version, monitors and detected tools.", "system"),
@@ -580,22 +597,35 @@ KEY_PAGE = {
     "scroller_prefer_center": "layout-scroller", "scroller_focus_center": "layout-scroller",
     "scroller_proportion_preset": "layout-scroller",
     "edge_scroller_pointer_focus": "layout-scroller",
+    "edge_scroller_focus_allow_speed": "layout-scroller",
     # input — keyboard
-    "numlock_on": "keyboard", "repeat_delay": "keyboard", "repeat_rate": "keyboard",
+    "key_mode": "keyboard", "numlock_on": "keyboard", "repeat_delay": "keyboard",
+    "repeat_rate": "keyboard",
     "xkb_rules_layout": "keyboard", "xkb_rules_variant": "keyboard",
+    "xkb_rules_model": "keyboard", "xkb_rules_rules": "keyboard",
     "xkb_rules_options": "keyboard",
     # input — pointer
     "mouse_accel_profile": "pointer", "mouse_accel_speed": "pointer",
     "mouse_left_handed": "pointer", "mouse_middle_button_emulation": "pointer",
-    "mouse_natural_scrolling": "pointer",
-    # input — trackpad
+    "mouse_natural_scrolling": "pointer", "mouse_scroll_method": "pointer",
+    "mouse_scroll_button": "pointer", "mouse_click_method": "pointer",
+    "mouse_send_events_mode": "pointer", "button_map": "pointer",
+    "axis_scroll_factor": "pointer", "axis_bind_apply_timeout": "pointer",
+    # input — trackpad / touchscreen
     "disable_trackpad": "trackpad", "tap_to_click": "trackpad",
     "tap_and_drag": "trackpad", "drag_lock": "trackpad",
     "trackpad_natural_scrolling": "trackpad",
     "trackpad_disable_while_typing": "trackpad",
     "trackpad_left_handed": "trackpad",
     "trackpad_middle_button_emulation": "trackpad",
+    "trackpad_accel_profile": "trackpad", "trackpad_accel_speed": "trackpad",
+    "trackpad_scroll_method": "trackpad", "trackpad_scroll_button": "trackpad",
+    "trackpad_scroll_factor": "trackpad", "trackpad_click_method": "trackpad",
+    "trackpad_send_events_mode": "trackpad",
+    "send_events_mode": "trackpad", "touch_enable": "trackpad",
+    "touch_enable_mouse_emulation": "trackpad",
     "swipe_min_threshold": "trackpad",
+    "cursor_hide_on_keypress": "cursor",
     # animations — general
     "animations": "animations-general", "layer_animations": "animations-general",
     "animation_type_open": "animations-general",
@@ -610,6 +640,9 @@ KEY_PAGE = {
     "animation_duration_move": "animations-timing",
     "animation_duration_focus": "animations-timing",
     "animation_duration_tag": "animations-timing",
+    "animation_duration_workspace_overview_open": "animations-timing",
+    "animation_duration_workspace_overview_close": "animations-timing",
+    "animation_duration_workspace_overview_move": "animations-timing",
     "animation_fade_in": "animations-timing", "animation_fade_out": "animations-timing",
     "fade_in_begin_opacity": "animations-timing",
     "fade_out_begin_opacity": "animations-timing",
@@ -617,19 +650,119 @@ KEY_PAGE = {
     "animation_curve_open": "animations-curves",
     "animation_curve_close": "animations-curves",
     "animation_curve_move": "animations-curves",
-    "animation_curve_focus": "animations-curves",
     "animation_curve_tag": "animations-curves",
+    "animation_curve_focus": "animations-curves",
+    "animation_curve_opacity_fade_in": "animations-curves",
+    "animation_curve_opacity_fade_out": "animations-curves",
+    "animation_curve_workspace_overview_open": "animations-curves",
+    "animation_curve_workspace_overview_close": "animations-curves",
+    "animation_curve_workspace_overview_move": "animations-curves",
+    # appearance — more colors
+    "drop_color": "colors", "split_color": "colors",
+    "maximized_screen_color": "colors", "scratchpad_color": "colors",
+    "global_color": "colors", "overlay_color": "colors",
+    # window effects — dim
+    "dim_enable": "window-effects", "dim_focused_color": "window-effects",
+    "dim_unfocused_color": "window-effects",
+    # bars
+    "always_show_group_bar": "bars", "group_bar_height": "bars",
+    "group_bar_close_button_enable": "bars", "group_bar_button_size": "bars",
+    "group_bar_button_margin": "bars", "group_bar_button_color": "bars",
+    "group_bar_decorate_font_desc": "bars",
+    "group_bar_decorate_fg_color": "bars", "group_bar_decorate_bg_color": "bars",
+    "group_bar_decorate_focus_fg_color": "bars",
+    "group_bar_decorate_focus_bg_color": "bars",
+    "group_bar_decorate_border_color": "bars",
+    "group_bar_decorate_border_width": "bars",
+    "group_bar_decorate_corner_radius": "bars",
+    "group_bar_decorate_padding_x": "bars", "group_bar_decorate_padding_y": "bars",
+    "tab_bar_height": "bars", "tab_bar_decorate_font_desc": "bars",
+    "tab_bar_decorate_fg_color": "bars", "tab_bar_decorate_bg_color": "bars",
+    "tab_bar_decorate_focus_fg_color": "bars",
+    "tab_bar_decorate_focus_bg_color": "bars",
+    "tab_bar_decorate_border_color": "bars",
+    "tab_bar_decorate_border_width": "bars",
+    "tab_bar_decorate_corner_radius": "bars",
+    "tab_bar_decorate_padding_x": "bars", "tab_bar_decorate_padding_y": "bars",
+    "title_message_bar_height": "bars", "title_message_bar_gap": "bars",
+    "title_message_bar_decorate_font_desc": "bars",
+    "title_message_bar_decorate_fg_color": "bars",
+    "title_message_bar_decorate_bg_color": "bars",
+    "title_message_bar_decorate_focus_fg_color": "bars",
+    "title_message_bar_decorate_focus_bg_color": "bars",
+    "title_message_bar_decorate_border_color": "bars",
+    "title_message_bar_decorate_border_width": "bars",
+    "title_message_bar_decorate_corner_radius": "bars",
+    "title_message_bar_decorate_padding_x": "bars",
+    "title_message_bar_decorate_padding_y": "bars",
+    # jump labels
+    "jump_labels": "jump-labels",
+    "jump_label_decorate_font_desc": "jump-labels",
+    "jump_label_decorate_fg_color": "jump-labels",
+    "jump_label_decorate_bg_color": "jump-labels",
+    "jump_label_decorate_focus_fg_color": "jump-labels",
+    "jump_label_decorate_focus_bg_color": "jump-labels",
+    "jump_label_decorate_border_color": "jump-labels",
+    "jump_label_decorate_border_width": "jump-labels",
+    "jump_label_decorate_corner_radius": "jump-labels",
+    "jump_label_decorate_padding_x": "jump-labels",
+    "jump_label_decorate_padding_y": "jump-labels",
+    # layout extras
+    "tag_num": "layout-tiling", "tag_gather": "layout-tiling",
+    "tag_carousel": "layout-tiling", "center_master_overspread": "layout-tiling",
+    "center_when_single_stack": "layout-tiling",
+    "dwindle_split_ratio": "layout-dwindle",
+    "scroller_prefer_overspread": "layout-scroller",
+    "monocle_right_button_close": "layout-tiling",
     # behaviour — focus
     "sloppy_focus": "focus", "focus_cross_monitor": "focus",
     "focus_cross_tag": "focus", "focus_on_activate": "focus",
     "warp_cursor": "focus", "auto_reload_config": "focus",
+    "view_current_to_back": "focus", "exchange_cross_monitor": "focus",
     # behaviour — drag & floating
     "drag_warp_cursor": "drag", "drag_tile_to_tile": "drag",
     "drag_tile_small": "drag", "enable_floating_snap": "drag",
     "snap_distance": "drag", "float_full_to_top": "drag",
+    "drag_corner": "drag", "enable_border_resize": "drag",
+    "border_resize_size": "drag",
+    # behaviour — gestures
+    "gesture_live": "gestures", "gesture_swipe_distance": "gestures",
+    "gesture_swipe_cancel_ratio": "gestures",
+    "gesture_swipe_min_speed_to_force": "gestures",
+    # behaviour — special tag
+    "special_tag_cross_monitor": "special-tag", "special_dim": "special-tag",
+    "special_gap_inner_horizontal": "special-tag",
+    "special_gap_inner_vertical": "special-tag",
+    "special_gap_outer_horizontal": "special-tag",
+    "special_gap_outer_vertical": "special-tag",
+    # behaviour — overview & hotarea
+    "enable_hotarea": "overview", "hotarea_size": "overview",
+    "hotarea_corner": "overview", "hotarea_disable_on_fullscreen": "overview",
+    "overview_gap_inner": "overview", "overview_gap_outer": "overview",
+    "overcircle_center_ratio": "overview",
+    "workspace_overview_gap": "overview",
+    "workspace_overview_border_width": "overview",
+    "workspace_overview_drag_threshold": "overview",
+    "workspace_overview_occupied_keep_seen_tags": "overview",
+    "workspace_overview_scroll_direction": "overview",
+    "workspace_overview_scroll_ratio": "overview",
+    "workspace_overview_drag_scroll_speed": "overview",
+    "workspace_overview_scroll_decel_start_interval": "overview",
+    "workspace_overview_scroll_decel_gain": "overview",
+    "workspace_overview_focused_dim_opacity": "overview",
+    "workspace_overview_unfocused_dim_opacity": "overview",
     # behaviour — scratchpad
     "single_scratchpad": "scratchpad", "scratchpad_cross_monitor": "scratchpad",
-    "scratchpad_width_ratio": "scratchpad", "scratchpad_height_ratio": "scratchpad",
+    "scratchpad_width_ratio": "scratchpad",
+    "scratchpad_height_ratio": "scratchpad",
+    "focus_direction_only_zone_overlap": "focus",
+    # advanced
+    "allow_tearing": "advanced", "hdr_depth": "advanced",
+    "sync_obj_enable": "advanced", "allow_shortcuts_inhibit": "advanced",
+    "allow_lock_transparent": "advanced", "disable_middle_paste": "advanced",
+    "idle_inhibit_ignore_visible": "advanced",
+    "idle_inhibit_when_fullscreen": "advanced",
+    "xwayland_ignore_scale": "advanced", "xwayland_persistence": "advanced",
 }
 
 def child_pages(parent_id):
@@ -685,6 +818,18 @@ def build_schema():
           "0x201b14ff", group="Borders"),
         P("urgent_color", "Urgent window border color", OptDef.COLOR,
           "0xad401fff", group="Borders"),
+        P("maximized_screen_color", "Maximized border color", OptDef.COLOR,
+          "0x89aa61ff", group="Borders"),
+        P("scratchpad_color", "Scratchpad border color", OptDef.COLOR,
+          "0x516c93ff", group="Borders"),
+        P("global_color", "Global window border color", OptDef.COLOR,
+          "0xb153a7ff", group="Borders"),
+        P("overlay_color", "Overlay window border color", OptDef.COLOR,
+          "0x14a57cff", group="Borders"),
+        P("drop_color", "Tile drag drop-target color", OptDef.COLOR,
+          "0x8fba7c55", group="Borders"),
+        P("split_color", "Dwindle split indicator color", OptDef.COLOR,
+          "0xeb441eff", group="Borders"),
         # Opacity
         P("focused_opacity", "Focused window opacity", OptDef.FLOAT, "1.0", 0.0, 1.0,
           group="Opacity"),
@@ -723,6 +868,122 @@ def build_schema():
           group="Shadows"),
         P("shadows_color", "Shadow color (0xRRGGBBAA)", OptDef.COLOR,
           "0x000000ff", group="Shadows"),
+        # Dim
+        P("dim_enable", "Dim windows", OptDef.BOOL, "0",
+          desc="Enable the dim overlay on windows", group="Dim"),
+        P("dim_focused_color", "Dim color of the focused window",
+          OptDef.COLOR, "0x00000000", group="Dim"),
+        P("dim_unfocused_color", "Dim color of unfocused windows",
+          OptDef.COLOR, "0x00000055", group="Dim"),
+        # Group bar / tab bar / title message bar (Mango's built-in bars)
+        P("always_show_group_bar", "Always show group bar", OptDef.BOOL, "0",
+          group="Group bar"),
+        P("group_bar_height", "Group bar height", OptDef.INT, "33", 10, 200,
+          group="Group bar"),
+        P("group_bar_close_button_enable", "Group bar close button",
+          OptDef.BOOL, "0", group="Group bar"),
+        P("group_bar_button_size", "Close button size", OptDef.INT, "16", 1, 100,
+          group="Group bar"),
+        P("group_bar_button_margin", "Close button margin", OptDef.INT, "4",
+          0, 100, group="Group bar"),
+        P("group_bar_button_color", "Close button color", OptDef.COLOR,
+          "0xad401fff", group="Group bar"),
+        P("group_bar_decorate_font_desc", "Group bar font",
+          OptDef.STRING, "", desc="Pango font description", group="Group bar"),
+        P("group_bar_decorate_fg_color", "Group bar text color", OptDef.COLOR,
+          "0xc0caf5ff", group="Group bar"),
+        P("group_bar_decorate_bg_color", "Group bar background", OptDef.COLOR,
+          "0x1d2021ff", group="Group bar"),
+        P("group_bar_decorate_focus_fg_color", "Focused entry text color",
+          OptDef.COLOR, "0x9ece6aff", group="Group bar"),
+        P("group_bar_decorate_focus_bg_color", "Focused entry background",
+          OptDef.COLOR, "0x3c3836ff", group="Group bar"),
+        P("group_bar_decorate_border_color", "Group bar border color",
+          OptDef.COLOR, "0x3b4261ff", group="Group bar"),
+        P("group_bar_decorate_border_width", "Group bar border width",
+          OptDef.INT, "4", 0, 100, group="Group bar"),
+        P("group_bar_decorate_corner_radius", "Group bar corner radius",
+          OptDef.INT, "5", 0, 100, group="Group bar"),
+        P("group_bar_decorate_padding_x", "Group bar horizontal padding",
+          OptDef.INT, "0", 0, 100, group="Group bar"),
+        P("group_bar_decorate_padding_y", "Group bar vertical padding",
+          OptDef.INT, "0", 0, 100, group="Group bar"),
+        P("tab_bar_height", "Tab bar height", OptDef.INT, "33", 10, 200,
+          group="Tab bar"),
+        P("tab_bar_decorate_font_desc", "Tab bar font", OptDef.STRING, "",
+          desc="Pango font description", group="Tab bar"),
+        P("tab_bar_decorate_fg_color", "Tab bar text color", OptDef.COLOR,
+          "0xc0caf5ff", group="Tab bar"),
+        P("tab_bar_decorate_bg_color", "Tab bar background", OptDef.COLOR,
+          "0x1d2021ff", group="Tab bar"),
+        P("tab_bar_decorate_focus_fg_color", "Focused tab text color",
+          OptDef.COLOR, "0x7aa2f7ff", group="Tab bar"),
+        P("tab_bar_decorate_focus_bg_color", "Focused tab background",
+          OptDef.COLOR, "0x3c3836ff", group="Tab bar"),
+        P("tab_bar_decorate_border_color", "Tab bar border color",
+          OptDef.COLOR, "0x3b4261ff", group="Tab bar"),
+        P("tab_bar_decorate_border_width", "Tab bar border width",
+          OptDef.INT, "4", 0, 100, group="Tab bar"),
+        P("tab_bar_decorate_corner_radius", "Tab bar corner radius",
+          OptDef.INT, "5", 0, 100, group="Tab bar"),
+        P("tab_bar_decorate_padding_x", "Tab bar horizontal padding",
+          OptDef.INT, "0", 0, 100, group="Tab bar"),
+        P("tab_bar_decorate_padding_y", "Tab bar vertical padding",
+          OptDef.INT, "0", 0, 100, group="Tab bar"),
+        P("title_message_bar_height", "Title message bar height",
+          OptDef.INT, "52", 0, 200,
+          desc="Shown in overcircle and the window switcher (0 hides it)",
+          group="Title message bar"),
+        P("title_message_bar_gap", "Title message bar gap", OptDef.INT,
+          "20", 0, 200, group="Title message bar"),
+        P("title_message_bar_decorate_font_desc", "Title bar font",
+          OptDef.STRING, "", desc="Pango font description",
+          group="Title message bar"),
+        P("title_message_bar_decorate_fg_color", "Title bar text color",
+          OptDef.COLOR, "0xc0caf5ff", group="Title message bar"),
+        P("title_message_bar_decorate_bg_color", "Title bar background",
+          OptDef.COLOR, "0x1d2021ff", group="Title message bar"),
+        P("title_message_bar_decorate_focus_fg_color",
+          "Focused title bar text color", OptDef.COLOR, "0x9ece6aff",
+          group="Title message bar"),
+        P("title_message_bar_decorate_focus_bg_color",
+          "Focused title bar background", OptDef.COLOR, "0x3c3836ff",
+          group="Title message bar"),
+        P("title_message_bar_decorate_border_color", "Title bar border color",
+          OptDef.COLOR, "0x3b4261ff", group="Title message bar"),
+        P("title_message_bar_decorate_border_width", "Title bar border width",
+          OptDef.INT, "0", 0, 100, group="Title message bar"),
+        P("title_message_bar_decorate_corner_radius", "Title bar corner radius",
+          OptDef.INT, "15", 0, 100, group="Title message bar"),
+        P("title_message_bar_decorate_padding_x", "Title bar horizontal padding",
+          OptDef.INT, "0", 0, 100, group="Title message bar"),
+        P("title_message_bar_decorate_padding_y", "Title bar vertical padding",
+          OptDef.INT, "0", 0, 100, group="Title message bar"),
+        # Jump labels
+        P("jump_labels", "Jump label characters", OptDef.STRING,
+          "HJKLASDFGQWERTYUIOPZXCVBNM",
+          desc="Labels assigned to windows in jump label mode, in order",
+          group="Jump labels"),
+        P("jump_label_decorate_font_desc", "Jump label font",
+          OptDef.STRING, "", desc="Pango font description", group="Jump labels"),
+        P("jump_label_decorate_fg_color", "Jump label text color",
+          OptDef.COLOR, "0xc4939dff", group="Jump labels"),
+        P("jump_label_decorate_bg_color", "Jump label background",
+          OptDef.COLOR, "0x323232ff", group="Jump labels"),
+        P("jump_label_decorate_focus_fg_color", "Focused label text color",
+          OptDef.COLOR, "0xeda6b4ff", group="Jump labels"),
+        P("jump_label_decorate_focus_bg_color", "Focused label background",
+          OptDef.COLOR, "0x4e453cff", group="Jump labels"),
+        P("jump_label_decorate_border_color", "Jump label border color",
+          OptDef.COLOR, "0x8baa9bff", group="Jump labels"),
+        P("jump_label_decorate_border_width", "Jump label border width",
+          OptDef.INT, "4", 0, 100, group="Jump labels"),
+        P("jump_label_decorate_corner_radius", "Jump label corner radius",
+          OptDef.INT, "5", 0, 100, group="Jump labels"),
+        P("jump_label_decorate_padding_x", "Jump label horizontal padding",
+          OptDef.INT, "10", 0, 100, group="Jump labels"),
+        P("jump_label_decorate_padding_y", "Jump label vertical padding",
+          OptDef.INT, "10", 0, 100, group="Jump labels"),
     ]
     animations = [
         P("animations", "Animations", OptDef.BOOL, "1",
@@ -772,6 +1033,29 @@ def build_schema():
           "0.46,1.0,0.29,1", group="Easing curves"),
         P("animation_curve_focus", "Focus curve", OptDef.STRING,
           "0.46,1.0,0.29,1", group="Easing curves"),
+        P("animation_curve_opacity_fade_in", "Fade-in opacity curve",
+          OptDef.STRING, "0.46,1.0,0.29,1", group="Easing curves"),
+        P("animation_curve_opacity_fade_out", "Fade-out opacity curve",
+          OptDef.STRING, "0.5,0.5,0.5,0.5", group="Easing curves"),
+        # Workspace overview animations
+        P("animation_duration_workspace_overview_open",
+          "Overview open duration (ms)", OptDef.INT, "260", 0, 5000,
+          group="Workspace overview"),
+        P("animation_duration_workspace_overview_close",
+          "Overview close duration (ms)", OptDef.INT, "260", 0, 5000,
+          group="Workspace overview"),
+        P("animation_duration_workspace_overview_move",
+          "Overview move duration (ms)", OptDef.INT, "382", 0, 5000,
+          group="Workspace overview"),
+        P("animation_curve_workspace_overview_open",
+          "Overview open curve", OptDef.STRING,
+          "0.333333,1.0,0.666667,1.0", group="Workspace overview"),
+        P("animation_curve_workspace_overview_close",
+          "Overview close curve", OptDef.STRING,
+          "0.333333,1.0,0.666667,1.0", group="Workspace overview"),
+        P("animation_curve_workspace_overview_move",
+          "Overview move curve", OptDef.STRING, "0.26,0.99,0.26,1.0",
+          group="Workspace overview"),
     ]
     behavior = [
         P("sloppy_focus", "Sloppy focus", OptDef.BOOL, "1",
@@ -786,6 +1070,12 @@ def build_schema():
           group="Focus"),
         P("focus_direction_only_zone_overlap", "Directional focus needs overlap",
           OptDef.BOOL, "1", desc="focusdir only targets overlapping windows",
+          group="Focus"),
+        P("view_current_to_back", "View current returns to previous",
+          OptDef.BOOL, "0", desc="Viewing the current tag switches to the "
+          "previously viewed tag", group="Focus"),
+        P("exchange_cross_monitor", "Cross-monitor exchange", OptDef.BOOL, "0",
+          desc="Let exchange_client and move_client cross monitors",
           group="Focus"),
         P("auto_reload_config", "Auto reload config", OptDef.BOOL, "1",
           desc="Reload MangoWM when a config file changes on disk",
@@ -805,6 +1095,28 @@ def build_schema():
           group="Floating / placement"),
         P("drag_warp_cursor", "Warp cursor while dragging", OptDef.BOOL, "1",
           group="Floating / placement"),
+        P("enable_border_resize", "Border resize", OptDef.BOOL, "1",
+          desc="Drag a window border with the left button to resize",
+          group="Floating / placement"),
+        P("border_resize_size", "Border resize hitbox", OptDef.INT, "10", 0, 50,
+          desc="Thickness of the resize grab strip (0 = border width)",
+          group="Floating / placement"),
+        P("drag_corner", "Resize corner", OptDef.CHOICE, "3", choices=["0", "1",
+          "2", "3", "4"], desc="0 top-left, 1 top-right, 2 bottom-left, "
+          "3 bottom-right, 4 nearest", group="Floating / placement"),
+        # Gestures
+        P("gesture_live", "Live gestures", OptDef.BOOL, "1",
+          desc="Update transitions while fingers move, not only on release",
+          group="Gestures"),
+        P("gesture_swipe_distance", "Swipe distance", OptDef.INT, "300",
+          50, 2000, desc="Finger travel (px) for one full page transition",
+          group="Gestures"),
+        P("gesture_swipe_cancel_ratio", "Swipe cancel ratio", OptDef.FLOAT,
+          "0.5", 0.1, 0.9, desc="Fraction of the last page to drag before "
+          "release commits the swipe", group="Gestures"),
+        P("gesture_swipe_min_speed_to_force", "Swipe force speed",
+          OptDef.FLOAT, "10", 0, 100, desc="Average speed (px/event) that "
+          "commits the swipe below the cancel ratio", group="Gestures"),
         # Scratchpads
         P("single_scratchpad", "Single shared scratchpad", OptDef.BOOL, "1",
           group="Scratchpads"),
@@ -814,8 +1126,74 @@ def build_schema():
           0.1, 1.0, group="Scratchpads"),
         P("scratchpad_cross_monitor", "Scratchpads follow monitors", OptDef.BOOL,
           "1", group="Scratchpads"),
+        # Special tag
+        P("special_tag_cross_monitor", "Special tag cross monitor", OptDef.BOOL,
+          "0", desc="Activating the special tag on a monitor pulls windows "
+          "from other monitors", group="Special tag"),
+        P("special_dim", "Special tag dim", OptDef.FLOAT, "0.5", 0.0, 1.0,
+          desc="Background dim level while the special tag is active",
+          group="Special tag"),
+        P("special_gap_inner_horizontal", "Special inner gap (horizontal)",
+          OptDef.INT, "10", 0, 500, group="Special tag"),
+        P("special_gap_inner_vertical", "Special inner gap (vertical)",
+          OptDef.INT, "10", 0, 500, group="Special tag"),
+        P("special_gap_outer_horizontal", "Special outer gap (horizontal)",
+          OptDef.INT, "20", 0, 500, group="Special tag"),
+        P("special_gap_outer_vertical", "Special outer gap (vertical)",
+          OptDef.INT, "20", 0, 500, group="Special tag"),
+        # Overview & hotarea
+        P("enable_hotarea", "Enable hotarea", OptDef.BOOL, "0",
+          desc="Activate the overview by moving the cursor into a corner",
+          group="Hotarea"),
+        P("hotarea_size", "Hotarea size", OptDef.INT, "10", 1, 1000,
+          group="Hotarea"),
+        P("hotarea_corner", "Hotarea corner", OptDef.CHOICE, "2",
+          choices=["0", "1", "2", "3"],
+          desc="0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right",
+          group="Hotarea"),
+        P("hotarea_disable_on_fullscreen", "Disable while fullscreen",
+          OptDef.BOOL, "1", group="Hotarea"),
+        P("overview_gap_inner", "Overview inner gap", OptDef.INT, "5", 0, 1000,
+          group="Overview"),
+        P("overview_gap_outer", "Overview outer gap", OptDef.INT, "30", 0, 1000,
+          group="Overview"),
+        P("overcircle_center_ratio", "Overcircle center ratio", OptDef.FLOAT,
+          "0.5", 0.1, 0.9, desc="Focused window width as a fraction of the "
+          "screen width", group="Overview"),
+        P("workspace_overview_gap", "Workspace overview gap", OptDef.INT, "5",
+          0, 1000, group="Workspace overview"),
+        P("workspace_overview_border_width", "Workspace overview border width",
+          OptDef.INT, "2", 0, 100, group="Workspace overview"),
+        P("workspace_overview_drag_threshold", "Drag threshold", OptDef.INT,
+          "5", 0, 1000, group="Workspace overview"),
+        P("workspace_overview_occupied_keep_seen_tags",
+          "Keep seen tags in overview", OptDef.BOOL, "1",
+          group="Workspace overview"),
+        P("workspace_overview_scroll_direction", "Scroll direction",
+          OptDef.CHOICE, "vertical", choices=["vertical", "horizontal"],
+          group="Workspace overview"),
+        P("workspace_overview_scroll_ratio", "Scroll ratio", OptDef.FLOAT,
+          "0.8", 0.1, 10.0, group="Workspace overview"),
+        P("workspace_overview_drag_scroll_speed", "Drag scroll speed",
+          OptDef.FLOAT, "1.5", 0.1, 10.0, group="Workspace overview"),
+        P("workspace_overview_scroll_decel_start_interval",
+          "Scroll decel start interval (ms)", OptDef.INT, "50", 0, 1000,
+          group="Workspace overview"),
+        P("workspace_overview_scroll_decel_gain", "Scroll decel gain",
+          OptDef.FLOAT, "0.5", 0.0, 10.0, group="Workspace overview"),
+        P("workspace_overview_focused_dim_opacity", "Focused dim opacity",
+          OptDef.FLOAT, "0.0", 0.0, 1.0, group="Workspace overview"),
+        P("workspace_overview_unfocused_dim_opacity", "Unfocused dim opacity",
+          OptDef.FLOAT, "0.2", 0.0, 1.0, group="Workspace overview"),
     ]
     layouts = [
+        P("tag_num", "Number of tags", OptDef.INT, "9", 1, 31,
+          group="Tags"),
+        P("tag_gather", "Gather tags", OptDef.BOOL, "0",
+          desc="Compact occupied tags to consecutive numbers starting at 1",
+          group="Tags"),
+        P("tag_carousel", "Tag carousel", OptDef.BOOL, "0",
+          desc="Tags wrap around in a carousel", group="Tags"),
         P("default_master_factor", "Master factor", OptDef.FLOAT, "0.55", 0.05, 0.95,
           desc="Width fraction of the master column",
           group="Master-stack (tile)"),
@@ -841,8 +1219,14 @@ def build_schema():
           group="Scroller"),
         P("scroller_ignore_proportion_single", "Ignore proportion when single",
           OptDef.BOOL, "1", group="Scroller"),
+        P("scroller_prefer_overspread", "Prefer overspread", OptDef.BOOL, "1",
+          desc="Focused edge window fills unused space; overrides the "
+          "center options", group="Scroller"),
         P("edge_scroller_pointer_focus", "Focus slot under cursor at edge",
           OptDef.BOOL, "1", group="Scroller"),
+        P("edge_scroller_focus_allow_speed", "Edge focus speed", OptDef.FLOAT,
+          "0.0", 0.0, 1000.0, desc="Minimum pointer speed before edge focus "
+          "triggers", group="Scroller"),
         P("dwindle_smart_split", "Dwindle smart split", OptDef.BOOL, "0",
           group="Dwindle"),
         P("dwindle_drop_simple_split", "Dwindle drop simple split", OptDef.BOOL,
@@ -858,8 +1242,18 @@ def build_schema():
           "0", group="Dwindle"),
         P("dwindle_smart_resize", "Dwindle smart resize", OptDef.BOOL, "0",
           group="Dwindle"),
+        P("dwindle_split_ratio", "Dwindle split ratio", OptDef.FLOAT, "0.5",
+          0.05, 0.95, desc="Proportion of space for the first child when "
+          "splitting", group="Dwindle"),
+        P("center_master_overspread", "Center master overspread", OptDef.BOOL,
+          "0", desc="In center_tile let the master fill the screen when the "
+          "stack is empty", group="Master-stack (tile)"),
+        P("center_when_single_stack", "Center master with one stack window",
+          OptDef.BOOL, "1", group="Master-stack (tile)"),
         P("monocle_tab_mode", "Monocle tab bar", OptDef.BOOL, "1",
           group="Monocle / deck"),
+        P("monocle_right_button_close", "Monocle: right click closes tab",
+          OptDef.BOOL, "0", group="Monocle / deck"),
         P("monocle_no_border", "Monocle: no borders", OptDef.BOOL, "0",
           group="Monocle / deck"),
         P("monocle_no_gap", "Monocle: no gaps", OptDef.BOOL, "0",
@@ -870,6 +1264,9 @@ def build_schema():
           group="Monocle / deck"),
     ]
     input_ = [
+        P("key_mode", "Keybinding mode", OptDef.STRING, "default",
+          desc="Key mode new binds start in (used by setkeymode)",
+          group="Keyboard"),
         P("repeat_rate", "Key repeat rate (Hz)", OptDef.INT, "25", 1, 200,
           group="Keyboard"),
         P("repeat_delay", "Key repeat delay (ms)", OptDef.INT, "600", 0, 2000,
@@ -881,13 +1278,19 @@ def build_schema():
           group="Keyboard"),
         P("xkb_rules_variant", "Layout variant", OptDef.STRING, "",
           group="Keyboard"),
+        P("xkb_rules_model", "Keyboard model", OptDef.STRING, "",
+          group="Keyboard"),
+        P("xkb_rules_rules", "XKB rules file", OptDef.STRING, "",
+          group="Keyboard"),
         P("xkb_rules_options", "XKB options", OptDef.STRING, "",
           desc="e.g. ctrl:nocaps or grp:alt_shift_toggle", group="Keyboard"),
         P("cursor_theme", "Cursor theme", OptDef.CURSOR, "",
           desc="Empty = system default", group="Cursor"),
-        P("cursor_size", "Cursor size", OptDef.INT, "24", 8, 256, group="Cursor"),
+        P("cursor_size", "Cursor size", OptDef.INT, "24", 4, 512, group="Cursor"),
         P("cursor_hide_timeout", "Cursor hide timeout (s, 0 = never)",
           OptDef.INT, "0", 0, 3600, group="Cursor"),
+        P("cursor_hide_on_keypress", "Hide cursor on keypress", OptDef.BOOL,
+          "0", group="Cursor"),
         P("disable_trackpad", "Disable trackpad", OptDef.BOOL, "0",
           desc="Needs relogin to apply", group="Trackpad"),
         P("tap_to_click", "Tap to click", OptDef.BOOL, "1", group="Trackpad"),
@@ -903,15 +1306,89 @@ def build_schema():
           OptDef.BOOL, "0", group="Trackpad"),
         P("swipe_min_threshold", "Swipe minimum threshold", OptDef.INT, "1", 0, 100,
           group="Trackpad"),
+        P("trackpad_accel_profile", "Acceleration profile", OptDef.CHOICE, "2",
+          choices=["0", "1", "2"], desc="0 none, 1 flat, 2 adaptive",
+          group="Trackpad"),
+        P("trackpad_accel_speed", "Acceleration speed", OptDef.FLOAT, "0.0",
+          -1.0, 1.0, group="Trackpad"),
+        P("trackpad_scroll_method", "Scroll method", OptDef.CHOICE, "1",
+          choices=["0", "1", "2", "4"],
+          desc="0 disabled, 1 two-finger, 2 edge, 4 button", group="Trackpad"),
+        P("trackpad_scroll_button", "Scroll button", OptDef.INT, "274", 272,
+          279, desc="Button used for button scrolling", group="Trackpad"),
+        P("trackpad_scroll_factor", "Scroll factor", OptDef.FLOAT, "1.0",
+          0.1, 10.0, group="Trackpad"),
+        P("trackpad_click_method", "Click method", OptDef.CHOICE, "1",
+          choices=["0", "1", "2"], desc="0 no emulation, 1 button areas, "
+          "2 clickfinger", group="Trackpad"),
+        P("trackpad_send_events_mode", "Send events mode", OptDef.CHOICE, "0",
+          choices=["0", "1", "2"], desc="0 enabled, 1 disabled, 2 disabled "
+          "with an external pointer", group="Trackpad"),
+        P("send_events_mode", "Touch/tablet send events mode", OptDef.CHOICE,
+          "0", choices=["0", "1", "2"], desc="0 enabled, 1 disabled, "
+          "2 disabled with an external pointer", group="Touchscreen"),
+        P("touch_enable", "Enable touch", OptDef.BOOL, "1",
+          group="Touchscreen"),
+        P("touch_enable_mouse_emulation", "Touch mouse emulation", OptDef.BOOL,
+          "0", desc="Emulate clicks and drags on surfaces that reject touch",
+          group="Touchscreen"),
         P("mouse_natural_scrolling", "Natural scrolling", OptDef.BOOL, "0",
           group="Mouse"),
-        P("mouse_accel_profile", "Acceleration profile", OptDef.INT, "-1", -1, 2,
-          desc="-1 = default, 0 = flat, 1 = adaptive", group="Mouse"),
+        P("mouse_accel_profile", "Acceleration profile", OptDef.CHOICE, "2",
+          choices=["0", "1", "2"], desc="0 none, 1 flat, 2 adaptive",
+          group="Mouse"),
         P("mouse_accel_speed", "Acceleration speed", OptDef.FLOAT, "0.0", -1.0, 1.0,
           group="Mouse"),
+        P("mouse_scroll_method", "Scroll method", OptDef.CHOICE, "1",
+          choices=["0", "1", "2", "4"],
+          desc="0 disabled, 1 two-finger, 2 edge, 4 button", group="Mouse"),
+        P("mouse_scroll_button", "Scroll button", OptDef.INT, "274", 272, 279,
+          desc="Button used for button scrolling", group="Mouse"),
+        P("mouse_click_method", "Click method", OptDef.CHOICE, "1",
+          choices=["0", "1", "2"], desc="0 no emulation, 1 button areas, "
+          "2 clickfinger", group="Mouse"),
+        P("mouse_send_events_mode", "Send events mode", OptDef.CHOICE, "0",
+          choices=["0", "1", "2"], desc="0 enabled, 1 disabled, 2 disabled "
+          "with an external pointer", group="Mouse"),
         P("mouse_left_handed", "Left-handed", OptDef.BOOL, "0", group="Mouse"),
         P("mouse_middle_button_emulation", "Middle-button emulation",
           OptDef.BOOL, "0", group="Mouse"),
+        P("button_map", "Tap button map", OptDef.CHOICE, "0",
+          choices=["0", "1"], desc="0 left/right/middle, 1 left/middle/right",
+          group="Mouse"),
+        P("axis_scroll_factor", "Axis scroll factor", OptDef.FLOAT, "1.0",
+          0.1, 10.0, desc="Multiplier for wheel scroll speed", group="Mouse"),
+        P("axis_bind_apply_timeout", "Axis bind apply timeout", OptDef.INT,
+          "100", 0, 1000, desc="Minimum ms between axis binding calls",
+          group="Mouse"),
+    ]
+    advanced = [
+        P("allow_tearing", "Allow tearing", OptDef.CHOICE, "0",
+          choices=["0", "1", "2"], desc="0 off, 1 any window, "
+          "2 fullscreen only", group="Rendering"),
+        P("hdr_depth", "HDR render depth", OptDef.CHOICE, "2",
+          choices=["0", "1", "2"], desc="0 auto, 1 force 8-bit, 2 force 10-bit",
+          group="Rendering"),
+        P("sync_obj_enable", "Use DRM sync object timelines", OptDef.BOOL, "1",
+          desc="Requires a MangoWM restart to apply", group="Rendering"),
+        P("allow_shortcuts_inhibit", "Allow shortcut inhibition", OptDef.BOOL,
+          "1", desc="Let apps suspend compositor keybindings",
+          group="Security & behaviour"),
+        P("allow_lock_transparent", "Allow transparent lockscreen",
+          OptDef.BOOL, "0", group="Security & behaviour"),
+        P("disable_middle_paste", "Disable middle-click paste", OptDef.BOOL,
+          "0", desc="Turns off the primary selection for Wayland apps",
+          group="Security & behaviour"),
+        P("idle_inhibit_ignore_visible", "Hidden clients may inhibit idle",
+          OptDef.BOOL, "0", group="Security & behaviour"),
+        P("idle_inhibit_when_fullscreen", "Inhibit idle while fullscreen",
+          OptDef.BOOL, "0", group="Security & behaviour"),
+        P("xwayland_ignore_scale", "Ignore XWayland scale", OptDef.BOOL, "0",
+          desc="Make XWayland use physical pixels instead of the output scale",
+          group="XWayland"),
+        P("xwayland_persistence", "Keep XWayland alive", OptDef.BOOL, "1",
+          desc="Keep XWayland running when no X11 clients are active",
+          group="XWayland"),
     ]
     return {
         "appearance": appearance,
@@ -919,6 +1396,7 @@ def build_schema():
         "behavior": behavior,
         "layouts": layouts,
         "input": input_,
+        "advanced": advanced,
         # These pages are list-editors or custom pages; empty option lists.
         "keybindings": [], "workspaces": [], "windowrules": [],
         "monitors": [], "startup": [], "theming": [], "background": [],
@@ -940,6 +1418,7 @@ PAGE_RECORD = {
     "autostart": "exec_once", "environment": "env", "bindings": "bind",
     "monitor-rules": "monitor", "tag-rules": "tag_rule",
     "window-rules": "window_rule", "layer-rules": "layer_rule",
+    "device-rules": "device_rule",
 }
 
 WEB_FIELDS = {
@@ -1372,6 +1851,96 @@ MULTI_KEYS = {"exec", "exec_once"}          # may appear many times in config.co
 # Options handled on other pages / by other files — hidden from Appearance etc.
 HIDDEN_OPTION_KEYS = {"exec", "exec_once"}
 
+# Every top-level option MangoWM's option_defs.c understands (extracted from
+# the parse_option chain of upstream mango).  A test enforces that the schema
+# covers all of them, so no real setting is missing from the UI and unknown
+# keys are always genuinely unknown.
+MANGO_TOPLEVEL_KEYS = frozenset("""
+allow_lock_transparent allow_shortcuts_inhibit allow_tearing
+always_show_group_bar animation_curve_close animation_curve_focus
+animation_curve_move animation_curve_opacity_fade_in
+animation_curve_opacity_fade_out animation_curve_open animation_curve_tag
+animation_curve_workspace_overview_close animation_curve_workspace_overview_move
+animation_curve_workspace_overview_open animation_duration_close
+animation_duration_focus animation_duration_move animation_duration_open
+animation_duration_tag animation_duration_workspace_overview_close
+animation_duration_workspace_overview_move
+animation_duration_workspace_overview_open animation_fade_in animation_fade_out
+animations animation_type_close animation_type_open auto_reload_config
+axis_bind_apply_timeout axis_scroll_factor blur blur_layer blur_optimized
+blur_params_brightness blur_params_contrast blur_params_noise
+blur_params_num_passes blur_params_radius blur_params_saturation border_color
+border_px border_radius border_resize_size button_map center_master_overspread
+center_when_single_stack circle_layout cursor_hide_on_keypress
+cursor_hide_timeout cursor_size cursor_theme deck_tab_mode default_master_count
+default_master_factor dim_enable dim_focused_color dim_unfocused_color
+disable_middle_paste disable_trackpad drag_corner drag_lock drag_tile_small
+drag_tile_to_tile drag_warp_cursor drop_color dwindle_drop_simple_split
+dwindle_horizontal_split dwindle_manual_split dwindle_preserve_split
+dwindle_smart_split dwindle_split_ratio dwindle_vertical_split
+edge_scroller_focus_allow_speed edge_scroller_pointer_focus
+enable_border_resize enable_floating_snap enable_hotarea exchange_cross_monitor
+fade_in_begin_opacity fade_out_begin_opacity float_full_to_top focus_color
+focus_cross_monitor focus_cross_tag focus_direction_only_zone_overlap
+focused_opacity focus_on_activate gap_inner_horizontal gap_inner_vertical
+gap_outer_horizontal gap_outer_vertical gesture_live gesture_swipe_cancel_ratio
+gesture_swipe_distance gesture_swipe_min_speed_to_force global_color
+group_bar_button_color group_bar_button_margin group_bar_button_size
+group_bar_close_button_enable group_bar_decorate_bg_color
+group_bar_decorate_border_color group_bar_decorate_border_width
+group_bar_decorate_corner_radius group_bar_decorate_fg_color
+group_bar_decorate_focus_bg_color group_bar_decorate_focus_fg_color
+group_bar_decorate_font_desc group_bar_decorate_padding_x
+group_bar_decorate_padding_y group_bar_height hdr_depth hotarea_corner
+hotarea_disable_on_fullscreen hotarea_size idle_inhibit_ignore_visible
+idle_inhibit_when_fullscreen jump_label_decorate_bg_color
+jump_label_decorate_border_color jump_label_decorate_border_width
+jump_label_decorate_corner_radius jump_label_decorate_fg_color
+jump_label_decorate_focus_bg_color jump_label_decorate_focus_fg_color
+jump_label_decorate_font_desc jump_label_decorate_padding_x
+jump_label_decorate_padding_y jump_labels key_mode layer_animations
+layer_animation_type_close layer_animation_type_open layer_shadows
+maximized_screen_color monocle_no_border monocle_no_gap monocle_no_radius
+monocle_right_button_close monocle_tab_mode mouse_accel_profile
+mouse_accel_speed mouse_click_method mouse_left_handed
+mouse_middle_button_emulation mouse_natural_scrolling mouse_scroll_button
+mouse_scroll_method mouse_send_events_mode new_is_master
+no_border_when_single no_radius_when_single numlock_on overcircle_center_ratio
+overlay_color overview_gap_inner overview_gap_outer repeat_delay repeat_rate
+root_color scratchpad_color scratchpad_cross_monitor scratchpad_height_ratio
+scratchpad_width_ratio scroller_default_proportion
+scroller_default_proportion_single scroller_focus_center
+scroller_ignore_proportion_single scroller_prefer_center
+scroller_prefer_overspread scroller_proportion_preset scroller_structs
+send_events_mode shadow_only_floating shadows shadows_blur shadows_color
+shadows_position_x shadows_position_y shadows_size single_scratchpad
+sloppy_focus smart_gaps snap_distance special_dim special_gap_inner_horizontal
+special_gap_inner_vertical special_gap_outer_horizontal
+special_gap_outer_vertical special_tag_cross_monitor split_color
+swipe_min_threshold sync_obj_enable tab_bar_decorate_bg_color
+tab_bar_decorate_border_color tab_bar_decorate_border_width
+tab_bar_decorate_corner_radius tab_bar_decorate_fg_color
+tab_bar_decorate_focus_bg_color tab_bar_decorate_focus_fg_color
+tab_bar_decorate_font_desc tab_bar_decorate_padding_x
+tab_bar_decorate_padding_y tab_bar_height tag_animation_direction tag_carousel
+tag_gather tag_num tap_and_drag tap_to_click title_message_bar_gap
+title_message_bar_height touch_enable touch_enable_mouse_emulation
+trackpad_accel_profile trackpad_accel_speed trackpad_click_method
+trackpad_disable_while_typing trackpad_left_handed
+trackpad_middle_button_emulation trackpad_natural_scrolling
+trackpad_scroll_button trackpad_scroll_factor trackpad_scroll_method
+trackpad_send_events_mode unfocused_opacity urgent_color view_current_to_back
+warp_cursor workspace_overview_border_width workspace_overview_drag_scroll_speed
+workspace_overview_drag_threshold workspace_overview_focused_dim_opacity
+workspace_overview_gap workspace_overview_occupied_keep_seen_tags
+workspace_overview_scroll_decel_gain
+workspace_overview_scroll_decel_start_interval
+workspace_overview_scroll_direction workspace_overview_scroll_ratio
+workspace_overview_unfocused_dim_opacity xkb_rules_layout xkb_rules_model
+xkb_rules_options xkb_rules_rules xkb_rules_variant xwayland_ignore_scale
+xwayland_persistence zoom_end_ratio zoom_initial_ratio
+""".split())
+
 
 def page_matches(key, needle):
     """True when a page should stay visible for the Ctrl+F search text.
@@ -1489,7 +2058,8 @@ class MangoConfig(object):
             doc.load()
         except OSError as exc:
             _add_issue(self.issues, Issue.ERROR,
-                       "cannot read config file: %s" % exc.strerror or str(exc), doc.path)
+                       "cannot read config file: %s" %
+                       (exc.strerror or str(exc)), doc.path)
             return None
         self.docs[doc.real] = doc
         return doc
@@ -1832,6 +2402,31 @@ class RuleFile(object):
         self.exists = True
         self.load()
 
+    # -- key:value record helpers ------------------------------------------
+    def records_kv(self, name):
+        """[(index, {key: value})] for every ``key:value`` record of ``name``."""
+        out = []
+        for index, fields in self.records(name):
+            kv = {}
+            for field in fields:
+                key, sep, value = field.partition(":")
+                if sep:
+                    kv[key.strip()] = value.strip()
+                elif field:
+                    kv[field] = ""
+            out.append((index, kv))
+        return out
+
+    def update_kv(self, index, kv):
+        """Replace the record at ``index`` with ``key:value`` fields."""
+        payload = self.raw_lines[index][1]
+        fields = ["%s:%s" % (k, v) for k, v in kv.items() if v != ""]
+        self.update(index, fields)
+
+    def add_kv(self, name, kv):
+        fields = ["%s:%s" % (k, v) for k, v in kv.items() if v != ""]
+        self.add(name, fields)
+
     # -- domain helpers ----------------------------------------------------
     @staticmethod
     def bind_conflicts(records):
@@ -1848,6 +2443,289 @@ class RuleFile(object):
             else:
                 seen[ident] = index
         return out
+
+
+# ---------------------------------------------------------------------------
+# key:value rule records (monitor.conf, rule.conf)
+#
+# Current MangoWM parses monitor_rule, tag_rule, window_rule[_once],
+# layer_rule and device_rule as comma-separated ``key:value`` pairs (see
+# parse_option in mango's option_defs.c).  RECORD_FIELDS describes every
+# accepted key so the editors can generate dialogs and validation.
+# ---------------------------------------------------------------------------
+
+TF_TEXT, TF_BOOL, TF_INT, TF_FLOAT, TF_CHOICE = (
+    "text", "bool", "int", "float", "choice")
+
+
+def _tf(key, label, kind=TF_TEXT, extra=None, primary=False):
+    return (key, label, kind, extra, primary)
+
+
+RECORD_FIELDS = {
+    "monitor": [
+        _tf("name", "Output name", TF_TEXT, None, True),
+        _tf("make", "Make", TF_TEXT, None, True),
+        _tf("model", "Model", TF_TEXT, None, True),
+        _tf("serial", "Serial", TF_TEXT, None, True),
+        _tf("scale", "Scale", TF_FLOAT, (0.001, 1000.0)),
+        _tf("x", "Position X", TF_INT),
+        _tf("y", "Position Y", TF_INT),
+        _tf("width", "Width px (custom mode)", TF_INT),
+        _tf("height", "Height px (custom mode)", TF_INT),
+        _tf("refresh", "Refresh Hz (custom mode)", TF_FLOAT),
+        _tf("rr", "Transform (0-7)", TF_INT, (0, 7)),
+        _tf("vrr", "Variable refresh rate", TF_BOOL),
+        _tf("hdr", "HDR", TF_BOOL),
+        _tf("hdr_min_lum", "HDR min luminance", TF_FLOAT, (0, 10000)),
+        _tf("hdr_max_lum", "HDR max luminance", TF_FLOAT, (0, 10000)),
+        _tf("hdr_max_avg_lum", "HDR max avg luminance", TF_FLOAT, (0, 10000)),
+        _tf("hdr_force", "Force HDR", TF_BOOL),
+        _tf("icc", "ICC profile path", TF_TEXT),
+        _tf("disable", "Disable output", TF_BOOL),
+        _tf("primary", "Primary output", TF_BOOL),
+        _tf("custom", "Custom mode", TF_BOOL),
+    ],
+    "tag_rule": [
+        _tf("id", "Tag id (1-31, 0 special, * all)", TF_TEXT, None, True),
+        _tf("layout_name", "Layout", TF_TEXT, None, True),
+        _tf("monitor_name", "Monitor name", TF_TEXT, None, True),
+        _tf("monitor_make", "Monitor make", TF_TEXT, None, True),
+        _tf("monitor_model", "Monitor model", TF_TEXT, None, True),
+        _tf("monitor_serial", "Monitor serial", TF_TEXT, None, True),
+        _tf("master_count", "Master windows", TF_INT, (1, 99)),
+        _tf("master_factor", "Master factor", TF_FLOAT, (0.1, 0.9)),
+        _tf("scroller_default_proportion", "Scroller proportion", TF_FLOAT,
+            (0.0, 1.0)),
+        _tf("scroller_default_proportion_single", "Scroller single proportion",
+            TF_FLOAT, (0.0, 1.0)),
+        _tf("scroller_ignore_proportion_single", "Ignore single proportion",
+            TF_BOOL),
+        _tf("no_render_border", "No border", TF_BOOL),
+        _tf("open_as_floating", "Open floating", TF_BOOL),
+        _tf("no_hide", "No hide", TF_BOOL),
+    ],
+    "window_rule": [
+        _tf("app_id", "Window class / app_id", TF_TEXT, None, True),
+        _tf("title", "Title (substring)", TF_TEXT, None, True),
+        _tf("tags", "Tags bitmask", TF_INT),
+        _tf("monitor", "Monitor name", TF_TEXT),
+        _tf("is_floating", "Floating", TF_BOOL),
+        _tf("is_fullscreen", "Fullscreen", TF_BOOL),
+        _tf("is_fake_fullscreen", "Fake fullscreen", TF_BOOL),
+        _tf("is_global", "Visible on all tags", TF_BOOL),
+        _tf("is_overlay", "Overlay", TF_BOOL),
+        _tf("is_named_scratchpad", "Named scratchpad", TF_BOOL),
+        _tf("is_open_silent", "Open silently", TF_BOOL),
+        _tf("is_tag_silent", "Switch silently", TF_BOOL),
+        _tf("no_focus", "Never focus", TF_BOOL),
+        _tf("no_border", "No border", TF_BOOL),
+        _tf("no_shadow", "No shadow", TF_BOOL),
+        _tf("no_radius", "No corner radius", TF_BOOL),
+        _tf("no_animation", "No animation", TF_BOOL),
+        _tf("no_blur", "No blur", TF_BOOL),
+        _tf("no_fade_in", "No fade in", TF_BOOL),
+        _tf("no_fade_out", "No fade out", TF_BOOL),
+        _tf("no_force_center", "No force center", TF_BOOL),
+        _tf("no_size_hint", "Ignore size hints", TF_BOOL),
+        _tf("no_swallow", "No swallow", TF_BOOL),
+        _tf("stay_focused", "Stay focused", TF_BOOL),
+        _tf("ignore_maximize", "Ignore maximize requests", TF_BOOL),
+        _tf("ignore_minimize", "Ignore minimize requests", TF_BOOL),
+        _tf("allow_shortcuts_inhibit", "Allow shortcut inhibit", TF_BOOL),
+        _tf("allow_csd", "Allow CSD", TF_BOOL),
+        _tf("force_render", "Force render", TF_BOOL),
+        _tf("force_fake_maximize", "Force fake maximize", TF_BOOL),
+        _tf("force_tiled_state", "Force tiled state", TF_BOOL),
+        _tf("force_tearing", "Force tearing", TF_BOOL),
+        _tf("activation_bypass", "Bypass activation requests", TF_BOOL),
+        _tf("is_term", "Terminal", TF_BOOL),
+        _tf("confine_pointer", "Confine pointer", TF_BOOL),
+        _tf("idle_inhibit_when_focus", "Inhibit idle while focused", TF_BOOL),
+        _tf("vrr_only_fullscreen", "VRR while fullscreen", TF_BOOL),
+        _tf("animation_type_open", "Open animation", TF_CHOICE,
+            ["none", "fade", "slide", "zoom"]),
+        _tf("animation_type_close", "Close animation", TF_CHOICE,
+            ["none", "fade", "slide", "zoom"]),
+        _tf("focused_opacity", "Focused opacity", TF_FLOAT, (0.0, 1.0)),
+        _tf("unfocused_opacity", "Unfocused opacity", TF_FLOAT, (0.0, 1.0)),
+        _tf("scroller_proportion", "Scroller proportion", TF_FLOAT, (0.0, 1.0)),
+        _tf("scroller_proportion_single", "Scroller single proportion",
+            TF_FLOAT, (0.0, 1.0)),
+        _tf("width", "Width px", TF_INT),
+        _tf("height", "Height px", TF_INT),
+        _tf("offset_x", "Offset X", TF_INT),
+        _tf("offset_y", "Offset Y", TF_INT),
+    ],
+    "layer_rule": [
+        _tf("layer_name", "Layer name (regex)", TF_TEXT, None, True),
+        _tf("animation_type_open", "Open animation", TF_CHOICE,
+            ["none", "fade", "slide", "zoom"]),
+        _tf("animation_type_close", "Close animation", TF_CHOICE,
+            ["none", "fade", "slide", "zoom"]),
+        _tf("no_blur", "No blur", TF_BOOL),
+        _tf("no_animation", "No animation", TF_BOOL),
+        _tf("no_shadow", "No shadow", TF_BOOL),
+        _tf("shield_when_capture", "Shield during capture", TF_BOOL),
+    ],
+    "device_rule": [
+        _tf("name", "Device name", TF_TEXT, None, True),
+        _tf("ident", "Device identifier", TF_TEXT, None, True),
+        _tf("type", "Device type (touchpad/mouse/keyboard/touch)", TF_TEXT,
+            None, True),
+        _tf("repeat_rate", "Repeat rate", TF_INT),
+        _tf("repeat_delay", "Repeat delay (ms)", TF_INT),
+        _tf("kb_rules", "XKB rules", TF_TEXT),
+        _tf("kb_model", "XKB model", TF_TEXT),
+        _tf("kb_layout", "XKB layout", TF_TEXT),
+        _tf("kb_variant", "XKB variant", TF_TEXT),
+        _tf("kb_options", "XKB options", TF_TEXT),
+        _tf("natural_scrolling", "Natural scrolling", TF_BOOL),
+        _tf("accel_profile", "Accel profile (0 none, 1 flat, 2 adaptive)",
+            TF_INT, (0, 2)),
+        _tf("accel_speed", "Accel speed", TF_FLOAT, (-1.0, 1.0)),
+        _tf("left_handed", "Left-handed", TF_BOOL),
+        _tf("middle_button_emulation", "Middle-button emulation", TF_BOOL),
+        _tf("scroll_method", "Scroll method (0/1/2/4)", TF_INT, (0, 4)),
+        _tf("scroll_button", "Scroll button", TF_INT, (272, 279)),
+        _tf("click_method", "Click method (0/1/2)", TF_INT, (0, 2)),
+        _tf("send_events_mode", "Send events (0/1/2)", TF_INT, (0, 2)),
+        _tf("tap_to_click", "Tap to click", TF_BOOL),
+        _tf("tap_and_drag", "Tap and drag", TF_BOOL),
+        _tf("drag_lock", "Drag lock", TF_BOOL),
+        _tf("button_map", "Tap button map (0/1)", TF_INT, (0, 1)),
+        _tf("disable_while_typing", "Disable while typing", TF_BOOL),
+        _tf("monitor", "Restrict to monitor", TF_TEXT),
+        _tf("map_focus_monitor", "Map focus to monitor", TF_BOOL),
+    ],
+}
+
+# Fields shown first in the edit dialog (the rest are still accepted).
+RECORD_DIALOG_FIELDS = {
+    "monitor": ["name", "make", "model", "serial", "scale", "x", "y",
+                "width", "height", "refresh", "vrr", "hdr", "disable",
+                "primary"],
+    "tag_rule": ["id", "layout_name", "monitor_name", "master_count",
+                 "master_factor"],
+    "window_rule": ["app_id", "title", "tags", "monitor", "is_floating",
+                    "is_fullscreen", "is_overlay", "is_global",
+                    "is_named_scratchpad", "no_focus", "no_border",
+                    "no_animation", "width", "height", "offset_x", "offset_y"],
+    "layer_rule": ["layer_name", "animation_type_open",
+                   "animation_type_close", "no_blur", "no_animation",
+                   "no_shadow"],
+    "device_rule": ["name", "ident", "type", "repeat_rate", "repeat_delay",
+                    "natural_scrolling", "accel_profile", "accel_speed",
+                    "tap_to_click", "disable_while_typing"],
+}
+
+BOOL_TRUE = {"1", "true", "yes", "on"}
+
+
+def _parse_record_kv(text):
+    """Parse ``key:value, key:value`` into an ordered dict.
+
+    Raises ConfigError with an actionable message on malformed input.
+    """
+    out = {}
+    for i, part in enumerate(text.split(","), start=1):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ConfigError(
+                "field %d is missing its key: %r (expected key:value "
+                "pairs like name:eDP-1, scale:1.25)" % (i, part[:40]))
+        key, _, value = part.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise ConfigError("field %d has an empty key" % i)
+        if key in out:
+            raise ConfigError("duplicate key %r" % key)
+        out[key] = value
+    return out
+
+
+def validate_record(name, kv):
+    """Validate a key:value record against RECORD_FIELDS.
+
+    Returns (ok, error-message).  Enforces Mango's constraints: known keys
+    only, correct types and the cross-field rules from option_defs.c.
+    """
+    defs = RECORD_FIELDS.get(name)
+    if defs is None:
+        return True, ""
+    by_key = {d[0]: d for d in defs}
+    for key, value in kv.items():
+        if key not in by_key:
+            return False, "%s: unknown field %r (known fields: %s)" % (
+                name, key, ", ".join(d[0] for d in defs))
+        _k, _label, kind, extra, _primary = by_key[key]
+        if kind == TF_BOOL:
+            if value.lower() not in ("0", "1", "true", "false", "yes", "no"):
+                return False, "%s: %s must be 0 or 1 (got %r)" % (name, key, value)
+            continue
+        if value == "":
+            continue                      # empty means "unset" for text
+        if kind in (TF_INT, TF_FLOAT):
+            try:
+                num = int(value) if kind == TF_INT else float(value)
+            except ValueError:
+                return False, "%s: %s must be a %s (got %r)" % (
+                    name, key, "number" if kind == TF_FLOAT else "whole "
+                    "number", value)
+            if extra:
+                lo, hi = extra
+                if not (lo <= num <= hi):
+                    return False, "%s: %s must be between %s and %s" % (
+                        name, key, lo, hi)
+        elif kind == TF_CHOICE:
+            if value not in (extra or []):
+                return False, "%s: %s must be one of: %s" % (
+                    name, key, ", ".join(extra or []))
+    if name == "monitor":
+        ident = [kv.get(k) for k in ("name", "make", "model", "serial")
+                 if kv.get(k)]
+        if not ident:
+            return False, ("monitor rule needs at least one of name, "
+                           "make, model or serial")
+        has_w = int(kv["width"]) > 0 if kv.get("width") else False
+        has_h = int(kv["height"]) > 0 if kv.get("height") else False
+        has_r = float(kv["refresh"]) > 0 if kv.get("refresh") else False
+        if has_w != has_h or has_w != has_r:
+            return False, ("monitor rule must set width, height and "
+                           "refresh together")
+        if kv.get("custom") in BOOL_TRUE and not has_w:
+            return False, ("a custom monitor rule must set width, height "
+                           "and refresh")
+        has_x = kv.get("x") != "" and kv.get("x") is not None
+        has_y = kv.get("y") != "" and kv.get("y") is not None
+        if has_x != has_y:
+            return False, "monitor rule must set x and y together"
+    if name == "tag_rule":
+        idv = kv.get("id", "")
+        if idv not in ("", "*", "0") and not idv.isdigit():
+            return False, "tag_rule id must be a number, 0 (special) or *"
+        if idv.isdigit() and not 0 <= int(idv) <= 31:
+            return False, "tag_rule id must be between 0 and 31"
+        if idv == "0" and (kv.get("layout_name") or kv.get("monitor_name")):
+            pass                      # special-tag rules are allowed
+    if name == "window_rule" and not (kv.get("app_id") or kv.get("title")):
+        return False, "window_rule needs a match: set app_id and/or title"
+    return True, ""
+
+
+def render_record(name, kv, keep_order=None):
+    """Serialize a key:value dict as ``name = k:v, k:v`` (empty values
+    skipped)."""
+    parts = []
+    for key in (keep_order or list(kv.keys())):
+        value = kv.get(key)
+        if value is None or value == "":
+            continue
+        parts.append("%s:%s" % (key, value))
+    return "%s = %s" % (name, ", ".join(parts)) if parts else None
 
 
 # ---------------------------------------------------------------------------
@@ -1928,6 +2806,147 @@ def mango_version():
                 continue
             return first
     return "unknown (mmsg not found)"
+
+
+def mango_running():
+    """True when a mangowm compositor process is running."""
+    for proc in ("mango",):
+        rc, _ = run_cmd(["pgrep", "-x", proc], timeout=2)
+        if rc == 0:
+            return True
+    return False
+
+
+def known_targets():
+    """basename -> absolute path for the standard mango config files."""
+    known = {}
+    for path in (DEFAULT_CONFIG_PATH, DEFAULT_BIND_PATH, DEFAULT_RULE_PATH,
+                 DEFAULT_MONITOR_PATH, DEFAULT_AUTOSTART_PATH):
+        real = os.path.realpath(os.path.expanduser(path))
+        known[os.path.basename(real)] = real
+    return known
+
+
+def list_backups():
+    """Session backup snapshots under ~/.cache/mango-settings/backups.
+
+    Returns [(stamp, [(filename, path), …])] newest first.
+    """
+    root = os.path.expanduser(BACKUP_ROOT)
+    out = []
+    try:
+        stamps = sorted(os.listdir(root), reverse=True)
+    except OSError:
+        return out
+    for stamp in stamps:
+        bdir = os.path.join(root, stamp)
+        if not os.path.isdir(bdir):
+            continue
+        try:
+            files = sorted(os.listdir(bdir))
+        except OSError:
+            continue
+        if files:
+            out.append((stamp, [(f, os.path.join(bdir, f)) for f in files]))
+    return out
+
+
+def restore_backup(stamp, only_files=None):
+    """Copy the files of a backup snapshot back into their config folders.
+
+    ``only_files`` restricts the restore to given basenames.  The current
+    files are backed up first (same session backup scheme), so a restore is
+    itself reversible.  Returns (restored-count, message).
+    """
+    bdir = os.path.join(os.path.expanduser(BACKUP_ROOT), stamp)
+    if not os.path.isdir(bdir):
+        return 0, "Backup snapshot %s not found." % stamp
+    # Snapshot the current state first so a restore is itself reversible.
+    try:
+        pre_stamp = time.strftime("%Y%m%d-%H%M%S")
+        pre_dir = os.path.join(os.path.expanduser(BACKUP_ROOT),
+                               "pre-restore-" + pre_stamp)
+        os.makedirs(pre_dir, exist_ok=True)
+        cfgdir = os.path.dirname(os.path.expanduser(DEFAULT_CONFIG_PATH))
+        autostart = os.path.realpath(os.path.expanduser(DEFAULT_AUTOSTART_PATH))
+        for name in sorted(os.listdir(bdir)):
+            dest = known_targets().get(name) or os.path.join(cfgdir, name)
+            if os.path.isfile(dest) or dest == autostart:
+                shutil.copy2(dest, os.path.join(pre_dir, name))
+    except OSError:
+        pass                      # best-effort snapshot, never block a restore
+    known = known_targets()
+    cfgdir = os.path.dirname(os.path.expanduser(DEFAULT_CONFIG_PATH))
+    restored = 0
+    for name in sorted(os.listdir(bdir)):
+        if only_files and name not in only_files:
+            continue
+        src = os.path.join(bdir, name)
+        dest = known.get(name) or os.path.join(cfgdir, name)
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(src, dest)
+            restored += 1
+        except OSError as exc:
+            return restored, "Could not restore %s: %s" % (name, exc)
+    if not restored:
+        return 0, "Nothing matched in snapshot %s." % stamp
+    return restored, ""
+
+
+def export_config(dest_path):
+    """Archive every file in the mango config directory as a .tar.gz.
+
+    Relative, portable paths inside the archive; works with any HOME.
+    Returns (ok, message).
+    """
+    import tarfile
+    cfgdir = os.path.dirname(os.path.expanduser(DEFAULT_CONFIG_PATH))
+    if not os.path.isdir(cfgdir):
+        return False, "Nothing to export: %s does not exist." % cfgdir
+    try:
+        with tarfile.open(dest_path, "w:gz") as tf:
+            for name in sorted(os.listdir(cfgdir)):
+                full = os.path.join(cfgdir, name)
+                if os.path.isfile(full):
+                    tf.add(full, arcname=name)
+    except (OSError, tarfile.TarError) as exc:
+        return False, "Export failed: %s" % exc
+    return True, dest_path
+
+
+def import_config(archive_path):
+    """Restore a config archive made by export_config.
+
+    The existing config directory is backed up first.  Returns
+    (file-count, message).
+    """
+    import tarfile
+    cfgdir = os.path.dirname(os.path.expanduser(DEFAULT_CONFIG_PATH))
+    if not os.path.isfile(archive_path):
+        return 0, "Archive not found: %s" % archive_path
+    try:
+        with tarfile.open(archive_path, "r:gz") as tf:
+            members = [m for m in tf.getmembers() if m.isfile() and
+                       "/" not in m.name and not m.name.startswith(".")
+                       and ".." not in m.name]
+            # session backup of the current state before overwriting
+            try:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                bdir = os.path.join(os.path.expanduser(BACKUP_ROOT),
+                                    "pre-import-" + stamp)
+                os.makedirs(bdir, exist_ok=True)
+                for name in os.listdir(cfgdir):
+                    full = os.path.join(cfgdir, name)
+                    if os.path.isfile(full):
+                        shutil.copy2(full, os.path.join(bdir, name))
+            except OSError:
+                pass
+            os.makedirs(cfgdir, exist_ok=True)
+            tf.extractall(cfgdir, members=members)
+    except (OSError, tarfile.TarError) as exc:
+        return 0, "Import failed: %s" % exc
+    return len(members), ""
 
 
 def notification_daemons():
@@ -2064,12 +3083,7 @@ _WALLPAPER_LINE_RE = re.compile(
 
 def detect_wallpaper_backends():
     """Return the wallpaper backends available on this system."""
-    found = []
-    for name in WALLPAPER_BACKENDS:
-        rc, _out = run_cmd(["which", name], timeout=2)
-        if rc == 0:
-            found.append(name)
-    return found
+    return [name for name in WALLPAPER_BACKENDS if find_tool(name)]
 
 
 def apply_wallpaper(path, mode="fill", backend="swaybg"):
@@ -2081,8 +3095,7 @@ def apply_wallpaper(path, mode="fill", backend="swaybg"):
     template = WALLPAPER_BACKENDS.get(backend)
     if not template:
         return False, "Unknown wallpaper backend %r" % backend
-    rc, out = run_cmd(["which", backend], timeout=2)
-    if rc != 0:
+    if not find_tool(backend):
         return False, "%s is not installed" % backend
     fullpath = os.path.realpath(os.path.expanduser(path))
     if not os.path.isfile(fullpath):
@@ -2298,11 +3311,18 @@ def run_gui(args):
             self.changed = False
 
         def add_note(self, text):
+            """A muted note at the bottom of the page.  Rebuilds replace the
+            previous note instead of stacking duplicates."""
+            for child in list(self.content.get_children()):
+                if getattr(child, "_ms_note", False):
+                    self.content.remove(child)
             label = Gtk.Label(xalign=0)
             label.set_markup("<small>%s</small>" % GLib.markup_escape_text(text))
             label.set_line_wrap(True)
             label.get_style_context().add_class("ms-note")
+            label._ms_note = True
             self.content.pack_start(label, False, False, 2)
+            self.content.reorder_child(label, 0)
 
         def add_card(self, title=None):
             """A rounded titled card with a divider and a row container.
@@ -2358,6 +3378,7 @@ def run_gui(args):
                                      % (len(matched), total,
                                         GLib.markup_escape_text(needle)))
                     label.get_style_context().add_class("ms-note")
+                    label._ms_note = True
                     self.content.pack_start(label, False, False, 2)
                 else:
                     self.add_note("No settings on this page match \u201c%s\u201d."
@@ -2378,7 +3399,44 @@ def run_gui(args):
                 listbox.add(self._make_row(opt))
             if not self.widgets:
                 self.add_note("Nothing to configure here.")
+            else:
+                # Page footer: reset the whole page to MangoWM's defaults.
+                bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                              spacing=6)
+                bar.get_style_context().add_class("ms-add-row")
+                reset = Gtk.Button(label="Reset page to MangoWM defaults")
+                reset.set_tooltip_text(
+                    "Remove every option on this page from your config so "
+                    "MangoWM uses its built-in defaults again")
+                reset.get_style_context().add_class("ms-secondary-button")
+                reset.connect("clicked", self.on_reset_page)
+                bar.pack_start(reset, False, False, 0)
+                self.content.pack_start(bar, False, False, 2)
             self.show_all()
+
+        def on_reset_page(self, _btn):
+            keys = [k for k in self.widgets
+                    if self.app.config.get(k) is not None]
+            if not keys:
+                self.app.error_dialog(
+                    "Nothing on this page is set in your config — it already "
+                    "uses MangoWM's defaults.", error=False)
+                return
+            old = dict((k, self.app.config.get(k)) for k in keys)
+            for k in keys:
+                self.app.config.unset(k)
+
+            def undo():
+                for k, v in old.items():
+                    self.app.config.set(k, v)
+
+            def redo():
+                for k in old:
+                    self.app.config.unset(k)
+
+            self.app.record_change(undo, redo)
+            self.mark_changed()
+            self.rebuild()
 
         def rebuild(self):
             """Re-render the page from the config (used after a reset)."""
@@ -2577,6 +3635,16 @@ def run_gui(args):
             return w
 
         def _apply(self, opt, value):
+            """Validate and set, marking the row's control invalid inline
+            instead of popping a modal dialog on every keystroke."""
+            widget = (self.widgets.get(opt.key) or (None, None))[1]
+            entry = None
+            if isinstance(widget, Gtk.Box):
+                for child in widget.get_children():
+                    if isinstance(child, Gtk.Entry):
+                        entry = child
+            elif isinstance(widget, Gtk.Entry):
+                entry = widget
             try:
                 old = self.app.config.get(opt.key)
                 self.app.config.set(opt.key, value)
@@ -2586,8 +3654,18 @@ def run_gui(args):
                 label = self.row_labels.get(opt.key)
                 if label is not None:
                     self._decorate_label(label, opt)
+                if entry is not None:
+                    ctx = entry.get_style_context()
+                    ctx.remove_class("ms-invalid")
+                    entry.set_tooltip_text("")
             except ConfigError as exc:
-                self.app.error_dialog(str(exc))
+                # Keep the last valid value applied in the config; just flag
+                # the widget so the user sees what is wrong, without a modal
+                # dialog for every keystroke.
+                if entry is not None:
+                    ctx = entry.get_style_context()
+                    ctx.add_class("ms-invalid")
+                    entry.set_tooltip_text("Not applied: %s" % exc)
 
         def _on_bool(self, sw, _pspec, opt, state):
             active = sw.get_active()
@@ -2627,167 +3705,6 @@ def run_gui(args):
 
         def _on_text(self, entry, opt):
             self._apply(opt, entry.get_text())
-
-    class RuleListPage(PageBase):
-        """Editor for a RuleFile: list of records with add/edit/delete,
-        shown as rows inside a web-style card with a terminal-style add row."""
-
-        record_name = None
-
-        def __init__(self, app):
-            super().__init__(app)
-
-        def rules(self):
-            return self.app.rule_file(self.rule_file_attr()).records(self.record_name)
-
-        def build(self):
-            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-            self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-            self.listbox.get_style_context().add_class("ms-rows")
-            body = self.add_card(self.card_title())
-            body.pack_start(self.listbox, False, False, 0)
-            body.pack_start(self.make_add_row(), False, False, 4)
-            self.rebuild()
-
-        def card_title(self):
-            return self.record_name
-
-        def placeholder(self):
-            return ""
-
-        def make_add_row(self):
-            """Terminal-style input row: $ [entry] [Add]."""
-            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            bar.get_style_context().add_class("ms-add-row")
-            prompt = Gtk.Label(label="$")
-            prompt.get_style_context().add_class("ms-prompt")
-            bar.pack_start(prompt, False, False, 0)
-            self.add_entry = Gtk.Entry(hexpand=True)
-            self.add_entry.set_placeholder_text(self.placeholder())
-            self.add_entry.connect("activate", self.on_entry_activate)
-            bar.pack_start(self.add_entry, True, True, 0)
-            add = Gtk.Button.new_from_icon_name("list-add-symbolic",
-                                                Gtk.IconSize.BUTTON)
-            add.set_tooltip_text("Add %s" % self.record_name)
-            add.get_style_context().add_class("ms-add-button")
-            add.connect("clicked", self.on_entry_activate)
-            bar.pack_start(add, False, False, 0)
-            return bar
-
-        def on_entry_activate(self, _widget, *_a):
-            self.add_from_entry()
-
-        def add_from_entry(self):
-            """Turn the add row's text into a new record; subclasses decide."""
-            raise NotImplementedError
-
-        def rule_file_attr(self):
-            raise NotImplementedError
-
-        def field_labels(self):
-            raise NotImplementedError
-
-        def edit_dialog(self, fields=None, on_ok=None):
-            dlg = Gtk.Dialog(title=self.record_name.capitalize(),
-                             transient_for=self.get_toplevel(), modal=True)
-            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
-                            "_Save", Gtk.ResponseType.OK)
-            grid = Gtk.Grid(column_spacing=8, row_spacing=8)
-            grid.set_border_width(12)
-            entries = []
-            labels = self.field_labels()
-            for i, label in enumerate(labels):
-                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
-                entry = Gtk.Entry(width_chars=32)
-                entry.set_text(fields[i] if fields and i < len(fields) else "")
-                grid.attach(entry, 1, i, 1, 1)
-                entries.append(entry)
-            dlg.get_content_area().add(grid)
-            dlg.show_all()
-            if dlg.run() == Gtk.ResponseType.OK:
-                values = [e.get_text().strip() for e in entries]
-                dlg.destroy()
-                on_ok(values)
-                return True
-            dlg.destroy()
-            return False
-
-        def rebuild(self):
-            for child in self.listbox.get_children():
-                self.listbox.remove(child)
-            records = self.rules()
-            conflicts = dict(RuleFile.bind_conflicts(records)
-                             if self.record_name == "bind" else [])
-            for index, fields in records:
-                row = Gtk.ListBoxRow()
-                row.get_style_context().add_class("ms-row")
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                box.set_margin_start(10)
-                box.set_margin_end(10)
-                box.set_margin_top(6)
-                box.set_margin_bottom(6)
-                text = ", ".join(fields)[:96]
-                label = Gtk.Label(label=text, xalign=0, hexpand=True, ellipsize=3)
-                label.get_style_context().add_class("ms-row-label")
-                box.pack_start(label, True, True, 8)
-                if index in conflicts:
-                    warn = Gtk.Label()
-                    warn.set_markup("<span foreground='orange'>\u26a0 %s</span>"
-                                    % GLib.markup_escape_text(conflicts[index]))
-                    box.pack_start(warn, False, False, 4)
-                edit = Gtk.Button.new_from_icon_name("document-edit-symbolic",
-                                                     Gtk.IconSize.MENU)
-                edit.set_relief(Gtk.ReliefStyle.NONE)
-                edit.set_tooltip_text("Edit")
-                edit.connect("clicked", self.on_edit, index)
-                box.pack_start(edit, False, False, 2)
-                delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
-                                                       Gtk.IconSize.MENU)
-                delete.set_relief(Gtk.ReliefStyle.NONE)
-                delete.get_style_context().add_class("destructive-action")
-                delete.set_tooltip_text("Delete")
-                delete.connect("clicked", self.on_delete, index)
-                box.pack_start(delete, False, False, 2)
-                row.add(box)
-                self.listbox.add(row)
-            self.listbox.show_all()
-            if not records:
-                self.add_note("No %s entries yet." % self.record_name)
-
-        def _apply_and_record(self, mutation):
-            """Apply a RuleFile mutation and push an undoable change."""
-            rf = self.app.rule_file(self.rule_file_attr())
-            before = list(rf.raw_lines)
-            mutation()
-            after = list(rf.raw_lines)
-            self.app.record_change(
-                lambda: self.app.rule_restore(self.rule_file_attr(), before),
-                lambda: self.app.rule_restore(self.rule_file_attr(), after))
-            rf.save()
-            self.clear_dirty()
-            self.rebuild()
-
-        def on_add(self, _btn):
-            self.edit_dialog(on_ok=self._added)
-
-        def _added(self, values):
-            self._apply_and_record(
-                lambda: self.app.rule_file(self.rule_file_attr())
-                        .add(self.record_name, values))
-
-        def on_edit(self, _btn, index):
-            fields = self.app.rule_file(self.rule_file_attr()).raw_lines[index][1][1]
-            self.edit_dialog(fields=list(fields),
-                             on_ok=lambda v: self._edited(index, v))
-
-        def _edited(self, index, values):
-            self._apply_and_record(
-                lambda: self.app.rule_file(self.rule_file_attr())
-                        .update(index, values))
-
-        def on_delete(self, _btn, index):
-            self._apply_and_record(
-                lambda: self.app.rule_file(self.rule_file_attr()).remove(index))
 
     class KeybindsPage(PageBase):
         """Web-style bindings browser: category filter chips, action badges,
@@ -3079,78 +3996,333 @@ def run_gui(args):
             self.app.record_change(
                 lambda: self.app.rule_restore("bind", before),
                 lambda: self.app.rule_restore("bind", after))
+            self.app.suppress_external_events()
             rf.save()
             self.clear_dirty()
             self.rebuild()
 
-    class WindowRulesPage(RuleListPage):
-        page_key = "window-rules"
-        record_name = "window_rule"
+    class KeyValueRulesPage(PageBase):
+        """Editor for MangoWM's ``key:value`` rule records (monitor.conf and
+        rule.conf).  Records render as rows of ``key:value`` chips with
+        add/edit/delete, validated against Mango's accepted fields."""
 
-        def rule_file_attr(self):
-            return "rule"
+        page_key = None          # set by subclasses
+        record_name = None       # "monitor", "tag_rule", …
+        rule_attr = None         # "monitor" or "rule" (RuleFile attribute)
 
-        def field_labels(self):
-            return ["Window class", "Title", "Tags", "Float (0/1)", "Monitor"]
+        def __init__(self, app):
+            super().__init__(app)
 
-        def placeholder(self):
-            return "e.g. foot, , 2, 1, 0"
+        # -- plumbing ---------------------------------------------------
+        def rf(self):
+            return self.app.rule_file(self.rule_attr)
 
-        def add_from_entry(self):
+        def rules(self):
+            return self.rf().records_kv(self.record_name)
+
+        # -- build ------------------------------------------------------
+        def build(self):
+            self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self.listbox.get_style_context().add_class("ms-rows")
+            body = self.add_card(self.card_title())
+            body.pack_start(self.listbox, False, False, 0)
+            body.pack_start(self.make_add_row(), False, False, 4)
+            self.extra_buttons()
+            self.rebuild()
+
+        def card_title(self):
+            return self.record_name
+
+        def add_hint(self):
+            return "key:value, key:value  (e.g. %s)" % self.hint_example()
+
+        def hint_example(self):
+            return "name:eDP-1, scale:1.25"
+
+        def extra_buttons(self):
+            pass
+
+        def make_add_row(self):
+            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            bar.get_style_context().add_class("ms-add-row")
+            prompt = Gtk.Label(label="$")
+            prompt.get_style_context().add_class("ms-prompt")
+            bar.pack_start(prompt, False, False, 0)
+            self.add_entry = Gtk.Entry(hexpand=True)
+            self.add_entry.set_placeholder_text(self.add_hint())
+            self.add_entry.connect("activate", self.on_entry_activate)
+            bar.pack_start(self.add_entry, True, True, 0)
+            add = Gtk.Button.new_from_icon_name("list-add-symbolic",
+                                                Gtk.IconSize.BUTTON)
+            add.set_tooltip_text("Add %s" % self.record_name)
+            add.get_style_context().add_class("ms-add-button")
+            add.connect("clicked", self.on_entry_activate)
+            bar.pack_start(add, False, False, 0)
+            return bar
+
+        def on_entry_activate(self, _widget, *_a):
             text = self.add_entry.get_text().strip()
             if not text:
                 return
-            parts = [p.strip() for p in text.split(",") if p.strip()]
-            while len(parts) < 5:
-                parts.append("")
-            self.add_entry.set_text("")
-            self._added(parts)
-
-        def build(self):
-            super().build()
-            btn_once = Gtk.Button(label="Add window_rule_once")
-            btn_once.get_style_context().add_class("ms-secondary-button")
-            btn_once.connect("clicked", self.on_add_once)
-            self.content.pack_start(btn_once, False, False, 2)
-
-        def on_add_once(self, _btn):
-            self.edit_dialog(on_ok=self._added_once)
-
-        def _added_once(self, values):
-            self._apply_and_record(
-                lambda: self.app.rule_file("rule").add("window_rule_once",
-                                                        values))
-
-    class MonitorsPage(RuleListPage):
-        page_key = "monitor-rules"
-        record_name = "monitor"
-
-        def rule_file_attr(self):
-            return "monitor"
-
-        def field_labels(self):
-            return ["Name", "Enabled (0/1)", "X", "Y", "Width", "Height",
-                    "Scale", "Refresh", "Transform"]
-
-        def placeholder(self):
-            return "e.g. eDP-1"
-
-        def add_from_entry(self):
-            name = self.add_entry.get_text().strip()
-            if not name:
+            try:
+                kv = _parse_record_kv(text)
+            except ConfigError as exc:
+                self.app.error_dialog(str(exc))
+                return
+            ok, err = validate_record(self.record_name, kv)
+            if not ok:
+                self.app.error_dialog(err)
                 return
             self.add_entry.set_text("")
-            self._added([name, "1", "0", "0", "-1", "-1", "1", "0", "normal"])
+            self._apply_and_record(
+                lambda: self.rf().add_kv(self.record_name, kv))
 
-        def build(self):
-            super().build()
-            self.detect_btn = Gtk.Button(label="Add connected displays (mmsg)")
-            self.detect_btn.get_style_context().add_class("ms-secondary-button")
+        def rebuild(self):
+            for child in self.listbox.get_children():
+                self.listbox.remove(child)
+            records = self.rules()
+            for index, kv in records:
+                self.listbox.add(self._make_row(index, kv))
+            self.listbox.show_all()
+            if not records:
+                self.add_note(
+                    "No %s entries yet. Add one below or with the buttons "
+                    "above." % self.record_name)
+                # rebuild() is called repeatedly; keep only one note.
+                if not hasattr(self, "_note_count"):
+                    self._note_count = 0
+                self._note_count += 1
+
+        def _kv_errors(self, kv):
+            """Human-readable problems with an existing record, if any."""
+            ok, err = validate_record(self.record_name, kv)
+            return None if ok else err
+
+        def _make_row(self, index, kv):
+            row = Gtk.ListBoxRow()
+            row.get_style_context().add_class("ms-row")
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box.set_margin_start(10)
+            box.set_margin_end(10)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            row.add(box)
+            # First field as the headline chip, then the rest muted.
+            items = list(kv.items())
+            if items:
+                head_key, head_value = items[0]
+                chip = Gtk.Label(
+                    label="%s %s" % (head_key, head_value or "?"))
+                chip.get_style_context().add_class("ms-cmd")
+                box.pack_start(chip, False, False, 0)
+                rest = ", ".join(
+                    "%s:%s" % (k, v) for k, v in items[1:])[:90]
+                if rest:
+                    label = Gtk.Label(label=rest, xalign=0, hexpand=True,
+                                      ellipsize=3)
+                    label.get_style_context().add_class("ms-row-desc")
+                    box.pack_start(label, True, True, 4)
+                else:
+                    box.pack_start(Gtk.Box(), True, True, 0)
+            else:
+                box.pack_start(Gtk.Label(label="(empty)"), True, True, 0)
+            err = self._kv_errors(kv)
+            if err:
+                warn = Gtk.Label()
+                warn.set_markup("<span foreground='orange'>\u26a0</span>")
+                warn.set_tooltip_text(err)
+                box.pack_start(warn, False, False, 4)
+            edit = Gtk.Button.new_from_icon_name("document-edit-symbolic",
+                                                 Gtk.IconSize.MENU)
+            edit.set_relief(Gtk.ReliefStyle.NONE)
+            edit.get_style_context().add_class("ms-reset")
+            edit.set_tooltip_text("Edit")
+            edit.connect("clicked", self.on_edit, index)
+            box.pack_start(edit, False, False, 2)
+            delete = Gtk.Button.new_from_icon_name("user-trash-symbolic",
+                                                   Gtk.IconSize.MENU)
+            delete.set_relief(Gtk.ReliefStyle.NONE)
+            delete.get_style_context().add_class("ms-reset")
+            delete.set_tooltip_text("Delete")
+            delete.connect("clicked", self.on_delete, index)
+            box.pack_start(delete, False, False, 2)
+            return row
+
+        # -- edit dialog --------------------------------------------------
+        def edit_dialog(self, kv=None, on_ok=None):
+            fields = RECORD_FIELDS.get(self.record_name, [])
+            by_key = {d[0]: d for d in fields}
+            shown = [k for k in RECORD_DIALOG_FIELDS.get(
+                self.record_name, [d[0] for d in fields]) if k in by_key]
+            extra_keys = [k for k in kv if k not in shown] if kv else []
+            dlg = Gtk.Dialog(title=self.record_name,
+                             transient_for=self.get_toplevel(), modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                            "_Save", Gtk.ResponseType.OK)
+            dlg.set_default_response(Gtk.ResponseType.OK)
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_min_content_height(380)
+            grid = Gtk.Grid(column_spacing=10, row_spacing=8)
+            grid.set_border_width(12)
+            widgets = {}
+            for i, key in enumerate(shown):
+                _k, label, kind, extra, _primary = by_key[key]
+                grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
+                if kind == TF_BOOL:
+                    combo = Gtk.ComboBoxText()
+                    for text in ("(unset)", "No (0)", "Yes (1)"):
+                        combo.append_text(text)
+                    current = (kv or {}).get(key, "")
+                    combo.set_active({"": 0, "0": 1, "1": 2}.get(
+                        current.lower() if current else "", 0))
+                    grid.attach(combo, 1, i, 1, 1)
+                    widgets[key] = ("bool", combo)
+                elif kind == TF_CHOICE:
+                    combo = Gtk.ComboBoxText()
+                    combo.append_text("(unset)")
+                    for c in (extra or []):
+                        combo.append_text(c)
+                    current = (kv or {}).get(key, "")
+                    try:
+                        combo.set_active(
+                            0 if current not in (extra or [])
+                            else list(extra or []).index(current) + 1)
+                    except Exception:
+                        combo.set_active(0)
+                    grid.attach(combo, 1, i, 1, 1)
+                    widgets[key] = ("choice", combo)
+                else:
+                    entry = Gtk.Entry(width_chars=28, hexpand=True)
+                    if (kv or {}).get(key):
+                        entry.set_text((kv or {}).get(key, ""))
+                    entry.set_placeholder_text(
+                        {"int": "number", "float": "number"}.get(kind, ""))
+                    grid.attach(entry, 1, i, 1, 1)
+                    widgets[key] = ("text", entry)
+            i += 1
+            grid.attach(Gtk.Label(label="Extra fields", xalign=0), 0, i, 1, 1)
+            extra_entry = Gtk.Entry(width_chars=28, hexpand=True)
+            extra_entry.set_placeholder_text("key:value, key:value")
+            known_extra = [k for k in extra_keys if k in by_key]
+            if known_extra:
+                extra_entry.set_text(", ".join(
+                    "%s:%s" % (k, kv[k]) for k in known_extra))
+            grid.attach(extra_entry, 1, i, 1, 1)
+            scroll.add(grid)
+            dlg.get_content_area().pack_start(scroll, True, True, 0)
+            dlg.show_all()
+            resp = dlg.run()
+            if resp == Gtk.ResponseType.OK:
+                out = dict(kv) if kv else {}
+                # the shown fields always win over the extra field
+                for key in shown:
+                    if key in out:
+                        del out[key]
+                for key, (kind, w) in widgets.items():
+                    if kind == "bool":
+                        idx = w.get_active()
+                        if idx > 0:
+                            out[key] = "1" if idx == 2 else "0"
+                        elif key in out:
+                            del out[key]
+                    elif kind == "choice":
+                        text = w.get_active_text() or ""
+                        if text and text != "(unset)":
+                            out[key] = text
+                        elif key in out:
+                            del out[key]
+                    else:
+                        text = w.get_text().strip()
+                        if text:
+                            out[key] = text
+                        elif key in out:
+                            del out[key]
+                extra_text = extra_entry.get_text().strip()
+                if extra_text:
+                    try:
+                        extra_kv = _parse_record_kv(extra_text)
+                    except ConfigError as exc:
+                        dlg.destroy()
+                        self.app.error_dialog(str(exc))
+                        return False
+                    for k, v in extra_kv.items():
+                        if k not in by_key:
+                            dlg.destroy()
+                            self.app.error_dialog(
+                                "Unknown field %r (valid fields: %s)" % (
+                                    k, ", ".join(d[0] for d in fields)))
+                            return False
+                        out[k] = v
+                ok, err = validate_record(self.record_name, out)
+                if not ok:
+                    dlg.destroy()
+                    self.app.error_dialog(err)
+                    return False
+                dlg.destroy()
+                on_ok(out)
+                return True
+            dlg.destroy()
+            return False
+
+        # -- mutations ----------------------------------------------------
+        def _apply_and_record(self, mutation):
+            rf = self.rf()
+            before = list(rf.raw_lines)
+            mutation()
+            after = list(rf.raw_lines)
+            self.app.record_change(
+                lambda: self.app.rule_restore(self.rule_attr, before),
+                lambda: self.app.rule_restore(self.rule_attr, after))
+            rf.save()
+            self.clear_dirty()
+            self.rebuild()
+
+        def on_add(self, _btn):
+            self.edit_dialog(on_ok=self._added)
+
+        def _added(self, kv):
+            self._apply_and_record(
+                lambda: self.rf().add_kv(self.record_name, kv))
+
+        def on_edit(self, _btn, index):
+            kv = self.rf().records_kv(self.record_name)
+            current = next((k for i, k in kv if i == index), None)
+            if current is None:
+                return
+            self.edit_dialog(kv=dict(current),
+                             on_ok=lambda out: self._edited(index, out))
+
+        def _edited(self, index, kv):
+            self._apply_and_record(
+                lambda: self.rf().update_kv(index, kv))
+
+        def on_delete(self, _btn, index):
+            self._apply_and_record(
+                lambda: self.rf().remove(index))
+
+    class MonitorsPage(KeyValueRulesPage):
+        page_key = "monitor-rules"
+        record_name = "monitor"
+        rule_attr = "monitor"
+
+        def card_title(self):
+            return "monitor rules"
+
+        def hint_example(self):
+            return "name:eDP-1, scale:1.25"
+
+        def extra_buttons(self):
+            self.detect_btn = Gtk.Button(
+                label="Add connected displays (mmsg)")
+            self.detect_btn.get_style_context().add_class(
+                "ms-secondary-button")
             self.detect_btn.connect("clicked", self.on_detect)
             self.content.pack_start(self.detect_btn, False, False, 2)
             if not mmsg_available():
-                self.add_note("mmsg not found \u2014 'Add connected displays' needs "
-                              "MangoWM's mmsg. You can still add monitors manually.")
+                self.add_note("mmsg not found \u2014 'Add connected displays' "
+                              "needs MangoWM's mmsg. You can still add "
+                              "monitors manually.")
 
         def on_detect(self, _btn):
             monitors = connected_monitors()
@@ -3158,67 +4330,79 @@ def run_gui(args):
                 self.app.error_dialog("mmsg reported no connected displays "
                                       "(or mmsg is not installed).")
                 return
-            rf = self.app.rule_file("monitor")
-            existing = set(rec[1][0] for rec in rf.records("monitor") if rec[1])
+            existing = set(kv.get("name") for _i, kv in self.rules())
             new = [name for name, _desc in monitors if name not in existing]
             if not new:
                 return
 
             def add_all():
                 for name in new:
-                    rf.add("monitor", [name, "1", "0", "0", "-1", "-1", "1",
-                                       "0", "normal"])
+                    self.rf().add_kv("monitor", {"name": name})
 
             self._apply_and_record(add_all)
 
-    class TagRulesPage(RuleListPage):
+    class TagRulesPage(KeyValueRulesPage):
         page_key = "tag-rules"
         record_name = "tag_rule"
+        rule_attr = "rule"
 
-        def rule_file_attr(self):
-            return "rule"
+        def card_title(self):
+            return "tag rules"
 
-        def field_labels(self):
-            return ["Tag ID (0 = special, * = all)",
-                    "Layout (tile, scroller, monocle, deck\u2026)",
-                    "Monitor name (optional)"]
+        def hint_example(self):
+            return "id:2, layout_name:scroller"
 
-        def placeholder(self):
-            return "e.g. 1, scroller"
+    class WindowRulesPage(KeyValueRulesPage):
+        page_key = "window-rules"
+        record_name = "window_rule"
+        rule_attr = "rule"
 
-        def add_from_entry(self):
-            text = self.add_entry.get_text().strip()
-            if not text:
-                return
-            parts = [p.strip() for p in text.split(",") if p.strip()]
-            while len(parts) < 3:
-                parts.append("")
-            self.add_entry.set_text("")
-            self._added(parts)
+        def card_title(self):
+            return "window rules"
 
-    class LayerRulesPage(RuleListPage):
+        def hint_example(self):
+            return "app_id:foot, is_floating:1, tags:4"
+
+        def extra_buttons(self):
+            btn = Gtk.Button(label="Add window_rule_once (matches once)")
+            btn.get_style_context().add_class("ms-secondary-button")
+            btn.connect("clicked", self.on_add_once)
+            self.content.pack_start(btn, False, False, 2)
+
+        def on_add_once(self, _btn):
+            self.edit_dialog(on_ok=self._added_once)
+
+        def _added_once(self, kv):
+            self._apply_and_record(
+                lambda: self.rf().add_kv("window_rule_once", kv))
+
+    class LayerRulesPage(KeyValueRulesPage):
         page_key = "layer-rules"
         record_name = "layer_rule"
+        rule_attr = "rule"
 
-        def rule_file_attr(self):
-            return "rule"
+        def card_title(self):
+            return "layer rules"
 
-        def field_labels(self):
-            return ["Layer name (regex)", "Open anim (fade/slide/zoom/none)",
-                    "Close anim (fade/slide/zoom/none)"]
+        def hint_example(self):
+            return "layer_name:rofi, animation_type_open:slide"
 
-        def placeholder(self):
-            return "e.g. rofi, slide, fade"
+    class DeviceRulesPage(KeyValueRulesPage):
+        page_key = "device-rules"
+        record_name = "device_rule"
+        rule_attr = "rule"
 
-        def add_from_entry(self):
-            text = self.add_entry.get_text().strip()
-            if not text:
-                return
-            parts = [p.strip() for p in text.split(",") if p.strip()]
-            while len(parts) < 3:
-                parts.append("")
-            self.add_entry.set_text("")
-            self._added(parts)
+        def card_title(self):
+            return "device rules"
+
+        def hint_example(self):
+            return "type:touchpad, tap_to_click:1"
+
+        def extra_buttons(self):
+            self.add_note(
+                "Per-device overrides for the global input settings. MangoWM "
+                "matches devices by name, ident or type; unset fields fall "
+                "back to the global values on the other input pages.")
 
     class AutostartPage(PageBase):
         """exec_once / exec editors, one card each (like the web settings)."""
@@ -3311,6 +4495,7 @@ def run_gui(args):
             self.rebuild()
             self.app.record_multi_undo(key, old, list(self.app.config.get_all(key)))
             # Startup commands apply on save; keep the file written immediately.
+            self.app.suppress_external_events()
             self.app.config.save()
             self.clear_dirty()
 
@@ -3417,6 +4602,7 @@ def run_gui(args):
             self.entry.set_text("")
             self.rebuild()
             self.app.record_multi_undo("env", old, list(self.app.config.get_all("env")))
+            self.app.suppress_external_events()
             self.app.config.save()
             self.clear_dirty()
 
@@ -3429,6 +4615,7 @@ def run_gui(args):
                 return
             self.rebuild()
             self.app.record_multi_undo("env", old, list(self.app.config.get_all("env")))
+            self.app.suppress_external_events()
             self.app.config.save()
             self.clear_dirty()
 
@@ -3720,6 +4907,16 @@ def run_gui(args):
             frame = self.add_frame()
             frame.add(self.grid)
             self.rebuild()
+            btn = Gtk.Button(label="Copy all")
+            btn.set_tooltip_text("Copy the system info to the clipboard")
+            btn.connect("clicked", self.on_copy)
+            self.content.pack_start(btn, False, False, 4)
+            running = mango_running()
+            if not running:
+                self.add_note("MangoWM does not appear to be running — "
+                              "mmsg actions will fail until it is started.")
+            else:
+                self.add_note("MangoWM is running.")
 
         def rebuild(self):
             for child in self.grid.get_children():
@@ -3730,9 +4927,6 @@ def run_gui(args):
                 label.set_selectable(True)
                 self.grid.attach(label, 1, i, 1, 1)
             self.grid.show_all()
-            btn = Gtk.Button(label="Copy all")
-            btn.connect("clicked", self.on_copy)
-            self.content.pack_start(btn, False, False, 4)
 
         def on_copy(self, _btn):
             text = "\n".join("%s: %s" % kv for kv in system_info())
@@ -3869,6 +5063,34 @@ def run_gui(args):
 
             self.surface.pack_start(header, False, False, 0)
 
+            # -- external-change banner (revealed when a config file is
+            #    edited outside this app) ---------------------------------
+            self.banner = Gtk.Revealer()
+            self.banner.set_transition_type(
+                Gtk.RevealerTransitionType.SLIDE_DOWN)
+            banner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                 spacing=8)
+            banner_box.get_style_context().add_class("ms-banner")
+            self.banner_label = Gtk.Label(xalign=0)
+            self.banner_label.set_ellipsize(3)
+            banner_box.pack_start(self.banner_label, True, True, 0)
+            banner_reload = Gtk.Button(label="Reload")
+            banner_reload.get_style_context().add_class("suggested-action")
+            banner_reload.set_tooltip_text(
+                "Re-read the changed config files into Mango Settings")
+            banner_reload.connect(
+                "clicked", lambda *_: self.app.reload_config())
+            banner_box.pack_start(banner_reload, False, False, 0)
+            banner_close = Gtk.Button.new_from_icon_name(
+                "window-close-symbolic", Gtk.IconSize.MENU)
+            banner_close.set_relief(Gtk.ReliefStyle.NONE)
+            banner_close.set_tooltip_text("Ignore this change")
+            banner_close.connect(
+                "clicked", lambda *_: self.hide_external_change_banner())
+            banner_box.pack_start(banner_close, False, False, 0)
+            self.banner.add(banner_box)
+            self.surface.pack_start(self.banner, False, False, 0)
+
             # -- sidebar -------------------------------------------------------
             self.paned = Gtk.Paned()
             self.surface.pack_start(self.paned, True, True, 0)
@@ -3896,6 +5118,15 @@ def run_gui(args):
                     mango_version() or "unknown"))
             version.get_style_context().add_class("ms-brand-version")
             brand_box.pack_start(version, False, False, 0)
+            status = Gtk.Label(xalign=0)
+            running = mango_running()
+            status.set_markup(
+                "<small>%s</small>" % (
+                    "\u25cf running" if running else
+                    "\u25cb not running"))
+            status.get_style_context().add_class(
+                "ms-brand-running" if running else "ms-brand-stopped")
+            brand_box.pack_start(status, False, False, 0)
             brand.pack_start(brand_box, True, True, 0)
             side.pack_start(brand, False, False, 0)
 
@@ -3922,6 +5153,31 @@ def run_gui(args):
             footer.pack_start(self.theme_combo, True, True, 0)
             footer.pack_start(self._make_blur_check(), False, False, 0)
             side.pack_start(footer, False, False, 2)
+
+            # Accent color row: pick a custom highlight color.
+            accent_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                 spacing=6)
+            accent_row.set_margin_top(4)
+            accent_label = Gtk.Label(label="Accent", xalign=0)
+            accent_label.get_style_context().add_class("ms-note")
+            accent_row.pack_start(accent_label, False, False, 0)
+            accent_rgb = app.read_accent_rgba()
+            self.accent_btn = Gtk.ColorButton()
+            self.accent_btn.set_tooltip_text(
+                "Highlight color for sliders, toggles and the selected page")
+            if accent_rgb is not None:
+                rgba = Gdk.RGBA()
+                rgba.red, rgba.green, rgba.blue, rgba.alpha = accent_rgb
+                self.accent_btn.set_rgba(rgba)
+            self.accent_btn.connect("color-set", app.on_accent_picked)
+            accent_row.pack_start(self.accent_btn, False, False, 0)
+            accent_reset = Gtk.Button.new_from_icon_name(
+                "edit-undo-symbolic", Gtk.IconSize.MENU)
+            accent_reset.set_relief(Gtk.ReliefStyle.NONE)
+            accent_reset.set_tooltip_text("Use the default mango accent")
+            accent_reset.connect("clicked", app.on_accent_reset)
+            accent_row.pack_start(accent_reset, False, False, 0)
+            side.pack_start(accent_row, False, False, 2)
 
             self.paned.add1(side)
             self.paned.set_position(self._sidebar_position(side))
@@ -4052,9 +5308,12 @@ def run_gui(args):
             btn.set_tooltip_text("Setup")
             menu = Gtk.Menu.new()
             for label, handler in (
+                    ("Back up config", lambda *_: app.setup_backup()),
+                    ("Manage backups…", lambda *_: app.setup_backup_manager()),
+                    ("Export config…", lambda *_: app.setup_export()),
+                    ("Import config…", lambda *_: app.setup_import()),
                     ("Create default config", lambda *_: app.setup_create_default()),
-                    ("Open config folder", lambda *_: app.setup_open_folder()),
-                    ("Back up config", lambda *_: app.setup_backup())):
+                    ("Open config folder", lambda *_: app.setup_open_folder())):
                 item = Gtk.MenuItem(label=label)
                 item.connect("activate", handler)
                 menu.append(item)
@@ -4167,8 +5426,15 @@ def run_gui(args):
                     ctx.remove_class("ms-selected")
 
         def on_search(self, entry):
-            needle = entry.get_text().lower().strip()
-            self.app.search_needle = needle
+            """Debounced: typing quickly must not rebuild pages per keypress."""
+            self.app.search_needle = entry.get_text().lower().strip()
+            if getattr(self, "_search_pending", None) is not None:
+                GLib.source_remove(self._search_pending)
+            self._search_pending = GLib.timeout_add(150, self._apply_search)
+
+        def _apply_search(self):
+            self._search_pending = None
+            needle = self.app.search_needle
             # Keep every group header visible if any child matches.
             matching = {}
             for key, row in self.page_rows.items():
@@ -4249,6 +5515,16 @@ def run_gui(args):
             except Exception:
                 pass
 
+        def show_external_change_banner(self, path):
+            name = os.path.basename(path)
+            self.banner_label.set_text(
+                "%s changed outside Mango Settings. Reload to see the "
+                "changes." % name)
+            self.banner.set_reveal_child(True)
+
+        def hide_external_change_banner(self, *_a):
+            self.banner.set_reveal_child(False)
+
         def on_destroy(self, *_a):
             """Persist the window geometry for the next launch."""
             try:
@@ -4271,6 +5547,10 @@ def run_gui(args):
             # Session undo/redo stacks (mirrors the web settings' history).
             self._undo_stack = []
             self._redo_stack = []
+            # External-change detection (Gio file monitors).
+            self._monitors = []
+            self._suppress_external_until = 0.0
+            self._external_pending = None
 
         # -- wiring ---------------------------------------------------------
         def run(self):
@@ -4299,6 +5579,170 @@ def run_gui(args):
                 self.window.goto(self.args.page)
             if not self.config.exists:
                 self.offer_default_config()
+            if getattr(self.args, "selftest", False):
+                GLib.timeout_add(300, self.run_selftest)
+
+        def run_selftest(self):
+            """Build every page headlessly (--selftest; for CI and smoke
+            tests), verify the widgets write the intended config keys, and
+            exit non-zero on any failure."""
+            failures = []
+
+            def check(name, fn):
+                try:
+                    fn()
+                except Exception:
+                    import traceback
+                    failures.append((name, traceback.format_exc()))
+
+            def build_all():
+                for key in PAGE_ORDER:
+                    page = self.make_page(key)
+                    page.destroy()
+
+            def widgets_apply():
+                checks = 0
+                for page_key, opts in sorted(PAGE_SCHEMA.items()):
+                    page = self.make_page(page_key)
+                    for opt, widget in list(page.widgets.values()):
+                        if opt.type == OptDef.BOOL and isinstance(widget,
+                                                                  Gtk.Box):
+                            sw = next(c for c in widget.get_children()
+                                      if isinstance(c, Gtk.Switch))
+                            was = sw.get_active()
+                            sw.set_active(not was)
+                            expected = "1" if not was else "0"
+                            if self.config.get(opt.key) != expected:
+                                raise AssertionError(
+                                    "%s: switch did not write %s" % (
+                                        opt.key, expected))
+                            sw.set_active(was)
+                            checks += 1
+                        elif opt.type == OptDef.CHOICE:
+                            model = widget.get_model()
+                            # A labelled combo is a plain Gtk.ComboBox with a
+                            # (label, value) store; ComboBoxText stores text
+                            # only (and PyGObject reports n_columns == 2 for
+                            # it, so never use the column count here).
+                            two_col = (isinstance(widget, Gtk.ComboBox)
+                                       and not isinstance(
+                                           widget, Gtk.ComboBoxText))
+                            count = 0
+                            it = model.get_iter_first() if model else None
+                            while it is not None:
+                                count += 1
+                                it = model.iter_next(it)
+                            if count >= 2:
+                                other = (widget.get_active() + 1) % count
+                                widget.set_active(other)
+                                stored = self.config.get(opt.key)
+                                expected = (model[other][1] if two_col
+                                            else widget.get_active_text())
+                                if stored != expected:
+                                    raise AssertionError(
+                                        "%s: combo wrote %r expected %r" % (
+                                            opt.key, stored, expected))
+                                checks += 1
+                        elif isinstance(widget, Gtk.Box) and any(
+                                isinstance(c, Gtk.Entry)
+                                for c in widget.get_children()):
+                            entry = next(
+                                c for c in widget.get_children()
+                                if isinstance(c, Gtk.Entry))
+                            if opt.type == OptDef.COLOR:
+                                entry.set_text("0x123456ff")
+                                if self.config.get(opt.key) != "0x123456ff":
+                                    raise AssertionError(
+                                        "%s: color entry did not write"
+                                        % opt.key)
+                                entry.set_text("bogus-color")
+                                if self.config.get(opt.key) == "bogus-color":
+                                    raise AssertionError(
+                                        "%s: invalid color was written"
+                                        % opt.key)
+                                checks += 1
+                            elif opt.type == OptDef.STRING:
+                                entry.set_text("test-value")
+                                if self.config.get(opt.key) != "test-value":
+                                    raise AssertionError(
+                                        "%s: entry did not write" % opt.key)
+                                entry.set_text("no\nnewlines")
+                                if self.config.get(opt.key) == "no\nnewlines":
+                                    raise AssertionError(
+                                        "%s: invalid value was written"
+                                        % opt.key)
+                                checks += 1
+                    page.destroy()
+                if checks < 100:
+                    raise AssertionError(
+                        "only %d widgets exercised (expected more)" % checks)
+
+            def list_page_roundtrips():
+                # Autostart: add + delete an exec_once line, saved to disk.
+                page = self.make_page("autostart")
+                page.entries["exec_once"].set_text("foot")
+                page.on_entry_activate(page.entries["exec_once"], "exec_once")
+                saved = open(self.config.root_path).read()
+                if "exec_once = foot" not in saved:
+                    raise AssertionError(
+                        "exec_once not saved to config: %r" % saved)
+                index = next(i for i, (k, v) in enumerate(page.rules())
+                             if k == "exec_once" and v == "foot")
+                page.on_delete(None, index)
+                if "exec_once = foot" in open(self.config.root_path).read():
+                    raise AssertionError("exec_once delete did not save")
+                page.destroy()
+
+                # Environment variables page.
+                page = self.make_page("environment")
+                page.entry.set_text("XCURSOR_SIZE, 24")
+                page.on_entry_activate(page.entry)
+                saved = open(self.config.root_path).read()
+                if "env = XCURSOR_SIZE, 24" not in saved:
+                    raise AssertionError("env not saved: %r" % saved)
+                page.on_delete(None, 0)
+                page.destroy()
+
+            def monitor_kv_roundtrip():
+                page = self.make_page("monitor-rules")
+                rf = self.rule_file("monitor")
+                before = list(rf.raw_lines)
+                page.add_entry.set_text("name:DP-1, scale:1.25, vrr:1")
+                page.on_entry_activate(page.add_entry)
+                saved = open(rf.real).read() if rf.exists else ""
+                if "name:DP-1" not in saved:
+                    raise AssertionError("key:value monitor rule not saved: %r"
+                                         % saved)
+                if "scale:1.25" not in saved:
+                    raise AssertionError("monitor fields lost: %r" % saved)
+                self.rule_restore("monitor", before)
+                rf.save()
+                page.destroy()
+
+            def invalid_rejected():
+                page = self.make_page("monitor-rules")
+                rf = self.rule_file("monitor")
+                before = list(rf.raw_lines)
+                page.add_entry.set_text("width:1920, height:1080")
+                page.on_entry_activate(page.add_entry)   # no name -> refused
+                if list(rf.raw_lines) != before:
+                    raise AssertionError("invalid monitor rule was accepted")
+                page.destroy()
+
+            check("build-all-pages", build_all)
+            check("widgets-apply", widgets_apply)
+            check("list-page-roundtrips", list_page_roundtrips)
+            check("monitor-kv-roundtrip", monitor_kv_roundtrip)
+            check("invalid-rejected", invalid_rejected)
+            if failures:
+                for name, tb in failures:
+                    sys.stderr.write("selftest: %s failed\n%s\n" % (name, tb))
+                self.gtk_app.quit()
+                return False
+            sys.stdout.write("selftest: all pages built and %d interaction "
+                             "checks passed\n" % 4)
+            self.gtk_app.quit()
+            return False
 
         def _install_accelerators(self):
             actions = {
@@ -4324,6 +5768,7 @@ def run_gui(args):
             self.config = MangoConfig(root=self.args.config)
             self.config.load()
             self._rule_files = {}
+            self.install_file_monitor()
 
         def rule_file(self, which):
             if which in self._rule_files:
@@ -4354,6 +5799,7 @@ def run_gui(args):
                 "bindings": KeybindsPage,
                 "monitor-rules": MonitorsPage, "tag-rules": TagRulesPage,
                 "window-rules": WindowRulesPage, "layer-rules": LayerRulesPage,
+                "device-rules": DeviceRulesPage,
                 "theming": ThemingPage, "background": BackgroundPage,
                 "notifications": NotificationsPage, "files": ConfigFilesPage,
                 "system": SystemInfoPage,
@@ -4370,10 +5816,55 @@ def run_gui(args):
         def page_matches(self, key, needle):
             return page_matches(key, needle)
 
+        # -- external change detection ----------------------------------------
+        def install_file_monitor(self):
+            """Watch the loaded config files for edits made outside this app."""
+            wanted = {self.config.root_path}
+            wanted |= {rf.real for rf in self._rule_files.values() if rf.exists}
+            have = set()
+            for mon in list(self._monitors):
+                f = mon.get_property("file")
+                path = f.get_path() if f else None
+                if path in wanted:
+                    have.add(path)
+                    continue
+                mon.cancel()
+                self._monitors.remove(mon)
+            for path in sorted(wanted - have):
+                try:
+                    f = Gio.File.new_for_path(path)
+                    mon = f.monitor(Gio.FileMonitorFlags.NONE, None)
+                    mon.connect("changed", self.on_config_file_changed, path)
+                    self._monitors.append(mon)
+                except Exception:
+                    continue        # monitoring is best-effort
+
+        def on_config_file_changed(self, _monitor, _file, _other, event, path):
+            if event in (Gio.FileMonitorEvent.DELETED,
+                         Gio.FileMonitorEvent.PRE_UNMOUNT):
+                return
+            if time.time() < self._suppress_external_until:
+                return
+            if self._external_pending is not None:
+                GLib.source_remove(self._external_pending)
+            self._external_pending = GLib.timeout_add(
+                500, self._announce_external, path)
+            return False
+
+        def _announce_external(self, path):
+            self._external_pending = None
+            if self.window is not None:
+                self.window.show_external_change_banner(path)
+            return False
+
+        def suppress_external_events(self, seconds=2.0):
+            self._suppress_external_until = time.time() + seconds
+
         def reload_config(self):
             self.load_config()
             if self.window:
-                self.window.queue_draw()
+                self.window.rebuild_current()
+                self.window.hide_external_change_banner()
 
         def offer_default_config(self):
             default = "/usr/share/mango/config.conf"
@@ -4422,6 +5913,7 @@ def run_gui(args):
                 if resp != Gtk.ResponseType.ACCEPT:
                     return
             os.makedirs(os.path.dirname(self.config.root_path), exist_ok=True)
+            self.suppress_external_events()
             if self.config.exists:
                 try:
                     self.config.save()
@@ -4442,6 +5934,7 @@ def run_gui(args):
             self.error_dialog("Could not open %s (no xdg-open)." % folder)
 
         def setup_backup(self):
+            self.suppress_external_events()
             try:
                 saved = self.config.save()
             except ConfigError as exc:
@@ -4451,6 +5944,162 @@ def run_gui(args):
                 rf.save()
             self.error_dialog("Backed up %d file(s) to %s." % (
                 len(saved), self.config.backup_root), error=False)
+
+        # -- backup manager / import / export -------------------------------
+        def setup_backup_manager(self):
+            backups = list_backups()
+            if not backups:
+                self.error_dialog(
+                    "No backups yet. A snapshot is saved under %s every time "
+                    "a file is written." % os.path.expanduser(BACKUP_ROOT),
+                    error=False)
+                return
+            dlg = Gtk.Dialog(title="Backup manager",
+                             transient_for=self.window, modal=True)
+            dlg.add_buttons("_Close", Gtk.ResponseType.CLOSE,
+                            "_Restore", Gtk.ResponseType.OK)
+            dlg.set_default_response(Gtk.ResponseType.OK)
+            dlg.set_default_size(560, 400)
+            box = dlg.get_content_area()
+            box.set_spacing(6)
+            box.set_border_width(12)
+            info = Gtk.Label(xalign=0)
+            info.set_markup(
+                "<small>Every save writes a snapshot to %s. Select a "
+                "snapshot and restore it — the current files are backed up "
+                "first, so a restore is itself reversible.</small>"
+                % os.path.expanduser(BACKUP_ROOT))
+            info.set_line_wrap(True)
+            box.pack_start(info, False, False, 0)
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_vexpand(True)
+            listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+            listbox.get_style_context().add_class("ms-rows")
+            rows = {}
+            for stamp, files in backups:
+                row = Gtk.ListBoxRow()
+                row._ms_stamp = stamp
+                bx = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                bx.set_border_width(6)
+                name = Gtk.Label(label=stamp, xalign=0)
+                name.get_style_context().add_class("ms-row-label")
+                bx.pack_start(name, False, False, 4)
+                detail = Gtk.Label(
+                    label="%d file(s): %s" % (
+                        len(files), ", ".join(f[0] for f in files[:6]) +
+                        (", …" if len(files) > 6 else "")),
+                    xalign=0, hexpand=True, ellipsize=3)
+                detail.get_style_context().add_class("ms-row-desc")
+                bx.pack_start(detail, True, True, 4)
+                row.add(bx)
+                rows[stamp] = row
+                listbox.add(row)
+            scroll.add(listbox)
+            box.pack_start(scroll, True, True, 0)
+            dlg.show_all()
+            while True:
+                resp = dlg.run()
+                if resp != Gtk.ResponseType.OK:
+                    break
+                sel = listbox.get_selected_row()
+                if sel is None:
+                    self.error_dialog("Select a snapshot first.")
+                    continue
+                stamp = sel._ms_stamp
+                confirm = Gtk.MessageDialog(
+                    transient_for=dlg, modal=True,
+                    message_type=Gtk.MessageType.QUESTION,
+                    text="Restore snapshot %s?" % stamp)
+                confirm.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                                    "_Restore", Gtk.ResponseType.ACCEPT)
+                if confirm.run() == Gtk.ResponseType.ACCEPT:
+                    confirm.destroy()
+                    dlg.destroy()
+                    self.suppress_external_events()
+                    count, message = restore_backup(stamp)
+                    if message:
+                        self.error_dialog(message)
+                        return
+                    self.load_config()
+                    if self.window:
+                        self.window.rebuild_current()
+                    self.error_dialog(
+                        "Restored %d file(s) from %s." % (count, stamp),
+                        error=False)
+                    return
+                confirm.destroy()
+            dlg.destroy()
+
+        def setup_export(self):
+            dlg = Gtk.FileChooserDialog(
+                title="Export MangoWM configuration", action=Gtk.FileChooserAction.SAVE,
+                transient_for=self.window, modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                            "_Export", Gtk.ResponseType.OK)
+            dlg.set_do_overwrite_confirmation(True)
+            name = "mango-config-%s.tar.gz" % time.strftime("%Y%m%d")
+            dlg.set_current_name(name)
+            resp = dlg.run()
+            path = dlg.get_filename() if resp == Gtk.ResponseType.OK else None
+            dlg.destroy()
+            if not path:
+                return
+            self.suppress_external_events()
+            try:
+                self.config.save()
+                for rf in self._rule_files.values():
+                    rf.save()
+            except ConfigError as exc:
+                self.error_dialog(str(exc))
+                return
+            ok, message = export_config(path)
+            if not ok:
+                self.error_dialog(message)
+            else:
+                self.error_dialog("Exported your MangoWM configuration to "
+                                  "%s." % message, error=False)
+
+        def setup_import(self):
+            dlg = Gtk.FileChooserDialog(
+                title="Import MangoWM configuration",
+                action=Gtk.FileChooserAction.OPEN,
+                transient_for=self.window, modal=True)
+            dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                            "_Import", Gtk.ResponseType.OK)
+            filt = Gtk.FileFilter()
+            filt.set_name("Config archives (tar.gz)")
+            filt.add_pattern("*.tar.gz")
+            filt.add_pattern("*.tgz")
+            dlg.add_filter(filt)
+            resp = dlg.run()
+            path = dlg.get_filename() if resp == Gtk.ResponseType.OK else None
+            dlg.destroy()
+            if not path:
+                return
+            confirm = Gtk.MessageDialog(
+                transient_for=self.window, modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                text="Import configuration from %s?" % os.path.basename(path))
+            confirm.format_secondary_text(
+                "This replaces the files in your mango config directory. "
+                "The current state is backed up first.")
+            confirm.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                                "_Import", Gtk.ResponseType.ACCEPT)
+            if confirm.run() != Gtk.ResponseType.ACCEPT:
+                confirm.destroy()
+                return
+            confirm.destroy()
+            self.suppress_external_events()
+            count, message = import_config(path)
+            if message:
+                self.error_dialog(message)
+                return
+            self.load_config()
+            if self.window:
+                self.window.rebuild_current()
+            self.error_dialog("Imported %d file(s). The previous state was "
+                              "backed up before the import." % count,
+                              error=False)
 
         # -- undo / redo -----------------------------------------------------
         def record_change(self, undo_fn, redo_fn):
@@ -4551,6 +6200,7 @@ def run_gui(args):
 
         # -- actions ------------------------------------------------------------
         def action_save(self, *_a):
+            self.suppress_external_events()
             try:
                 saved = self.config.save()
                 for rf in self._rule_files.values():
@@ -4569,6 +6219,7 @@ def run_gui(args):
             self.load_config()
 
         def action_reload_mango(self, *_a):
+            self.suppress_external_events()
             try:
                 self.config.save()
                 for rf in self._rule_files.values():
@@ -4656,6 +6307,24 @@ def run_gui(args):
             except OSError:
                 pass
 
+        def read_accent_rgba(self):
+            text = self.read_ui_pref("accent", "") or ""
+            return _parse_mango_color(text)
+
+        def on_accent_picked(self, button):
+            rgba = button.get_rgba()
+            self.write_ui_pref(accent=_mango_color_from_rgba(rgba))
+            self.apply_blur()
+
+        def on_accent_reset(self, *_a):
+            self.write_ui_pref(accent="")
+            rgba = self.read_accent_rgba()
+            if rgba is not None and hasattr(self.window, "accent_btn"):
+                gdk = Gdk.RGBA()
+                gdk.red, gdk.green, gdk.blue, gdk.alpha = rgba
+                self.window.accent_btn.set_rgba(gdk)
+            self.apply_blur()
+
         def on_theme_changed(self, combo):
             theme = combo.get_active_text()
             if theme:
@@ -4695,6 +6364,13 @@ def run_gui(args):
                 border, primary, primary_fg = "#e6e1d3", "#f5aa00", "#412706"
                 muted_fg, sidebar = "#635646", "#fcfaf3"
                 destructive = "#e7000b"
+            # Optional user accent (settings.ini [ui] accent = 0xRRGGBB).
+            accent_text = (self.read_ui_pref("accent", "") or "").strip()
+            accent_rgba = _parse_mango_color(accent_text) if accent_text else None
+            if accent_rgba is not None:
+                primary = "#%02x%02x%02x" % tuple(
+                    min(255, max(0, int(round(c * 255.0))))
+                    for c in accent_rgba[:3])
             bg_a = "0.80" if on else "1.0"
             card_a = "0.82" if on else "1.0"
             side_a = "0.75" if on else "1.0"
@@ -4841,6 +6517,17 @@ def run_gui(args):
                     border-radius: 8px;
                 }
                 .destructive-action { color: %(destructive)s; }
+                .ms-invalid {
+                    border: 1px solid alpha(%(destructive)s, 0.9);
+                    background-color: alpha(%(destructive)s, 0.08);
+                }
+                .ms-banner {
+                    background-color: alpha(%(primary)s, 0.18);
+                    border-bottom: 1px solid alpha(%(border)s, 0.6);
+                    padding: 6px 12px;
+                }
+                .ms-brand-running { color: %(primary)s; }
+                .ms-brand-stopped { color: alpha(%(muted_fg)s, 0.6); }
                 tooltip { background-color: %(fg)s; color: %(bg)s; border-radius: 8px; }
             """ % {
                 "bg": bg, "fg": fg, "card": card, "border": border,
@@ -4898,6 +6585,8 @@ def build_parser():
                         help="list page names and exit")
     parser.add_argument("--version", action="store_true",
                         help="print version and exit")
+    parser.add_argument("--selftest", action="store_true",
+                        help=argparse.SUPPRESS)
     return parser
 
 

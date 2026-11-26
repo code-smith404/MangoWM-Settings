@@ -1,5 +1,62 @@
 # Changelog
 
+## 2.4.0 — full MangoWM option coverage, key:value rule editors, reliability
+
+### Compatibility
+
+- **Schema covers every top-level option MangoWM parses** (248 keys from
+  `option_defs.c`, verified by a test): bars & decorations (group bar, tab
+  bar, title message bar), jump labels, overview & hotarea, special tag,
+  gestures, dim, HDR/tearing/XWayland/idle-inhibit, touchscreens, per-axis
+  scroll and all remaining libinput enums. New pages: *Bars & Decorations*,
+  *Jump Labels*, *Overview & Hotarea*, *Special Tag*, *Gestures*,
+  *Advanced*, *Device Rules*.
+- **Rule editors rewritten for Mango's `key:value` records.** Mango parses
+  `monitor`, `tag_rule`, `window_rule[_once]`, `layer_rule` and
+  `device_rule` as `key:value` pairs; the old positional editors
+  (`eDP-1,1,0,0,…`) wrote records current MangoWM cannot read. All four
+  pages (plus the new Device Rules page) now emit, validate and edit
+  `name:eDP-1, scale:1.25`-style records with Mango's cross-field rules
+  (width/height/refresh together, x/y together, an identifier required,
+  ranges and bool fields).
+- **Corrected defaults** where Mango's built-in defaults differ from what
+  the schema showed (e.g. mouse/trackpad acceleration profile is *adaptive*,
+  cursor size range 4–512, XKB model/rules fields added).
+
+### New features
+
+- **External change detection**: the loaded config files are watched; edits
+  made outside the app raise a banner with a one-click *Reload* (own saves
+  are ignored).
+- **Backup manager**: browse every snapshot under
+  `~/.cache/mango-settings/backups` and restore with one click; restoring
+  snapshots the current state first (`pre-restore-*`), so it is reversible.
+- **Config export/import**: pack the whole `~/.config/mango` directory into
+  a portable `tar.gz` (with a pre-import backup) and import it back; path
+  traversal entries in archives are rejected.
+- **Per-page reset**: every schema page has a *Reset page to MangoWM
+  defaults* action (undoable).
+- **Custom accent color** for the app itself (sidebar picker, stored in
+  `settings.ini`), on top of the system/dark/light theme.
+- **Compositor status** in the sidebar and System Info page (running /
+  not running) plus a `mango_running()` helper.
+- **`--selftest`**: headless smoke test that builds every page and verifies
+  widgets actually write the intended config keys; used by CI.
+
+### Fixes and quality
+
+- Invalid values are now flagged **inline on the widget** (red outline +
+  tooltip) instead of popping a modal dialog on every keystroke; invalid
+  input never reaches the config.
+- Notes and buttons no longer accumulate when list pages rebuild.
+- Fixed the dead code and precedence bug in issue formatting and the
+  `OSError.strerror` message; wallpaper backend detection uses
+  `shutil.which` instead of spawning `which`.
+- Search is debounced (150 ms) so large pages do not rebuild per keypress.
+- 20 new unit tests (91 total): schema coverage against Mango's key list,
+  record validation, backup/restore roundtrip, export/import roundtrip and
+  archive safety.
+
 ## 2.3.0 — redesigned after the official MangoWM web settings
 
 The UI now mirrors https://mangowm.github.io/settings/ while keeping the

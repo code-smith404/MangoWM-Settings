@@ -605,3 +605,223 @@ class SearchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SchemaCoverageTests(unittest.TestCase):
+    """The schema must cover every top-level option MangoWM parses."""
+
+    def test_all_toplevel_keys_covered(self):
+        schema_keys = {o.key for opts in ms.SCHEMA.values() for o in opts}
+        missing = sorted(k for k in ms.MANGO_TOPLEVEL_KEYS if k not in schema_keys)
+        self.assertEqual(missing, [])
+
+    def test_every_option_mapped_to_a_page(self):
+        schema_keys = {o.key for opts in ms.SCHEMA.values() for o in opts}
+        orphans = sorted(k for k in schema_keys if k not in ms.KEY_PAGE)
+        self.assertEqual(orphans, [])
+
+    def test_pages_exist(self):
+        for key in set(ms.KEY_PAGE.values()):
+            self.assertIn(key, ms.PAGE_ORDER)
+
+    def test_new_pages_present(self):
+        for key in ("bars", "jump-labels", "overview", "special-tag",
+                    "gestures", "advanced", "device-rules"):
+            self.assertIn(key, ms.PAGE_ORDER)
+            self.assertTrue(ms.PAGE_SCHEMA.get(key) or
+                            key in ms.PAGE_RECORD)
+
+    def test_defaults_match_mangowm(self):
+        expected = {
+            "tag_num": "9", "tag_gather": "0", "tag_carousel": "0",
+            "center_when_single_stack": "1", "center_master_overspread": "0",
+            "dwindle_split_ratio": "0.5",
+            "group_bar_height": "33", "tab_bar_height": "33",
+            "title_message_bar_height": "52",
+            "group_bar_button_color": "0xad401fff",
+            "dim_focused_color": "0x00000000",
+            "dim_unfocused_color": "0x00000055",
+            "drop_color": "0x8fba7c55", "split_color": "0xeb441eff",
+            "hotarea_size": "10", "hotarea_corner": "2",
+            "enable_hotarea": "0", "overview_gap_inner": "5",
+            "overview_gap_outer": "30", "overcircle_center_ratio": "0.5",
+            "special_dim": "0.5", "special_gap_outer_horizontal": "20",
+            "gesture_live": "1", "gesture_swipe_distance": "300",
+            "workspace_overview_scroll_direction": "vertical",
+            "animation_duration_workspace_overview_open": "260",
+            "animation_curve_workspace_overview_open":
+                "0.333333,1.0,0.666667,1.0",
+            "jump_labels": "HJKLASDFGQWERTYUIOPZXCVBNM",
+            "jump_label_decorate_border_width": "4",
+            "key_mode": "default", "axis_bind_apply_timeout": "100",
+            "axis_scroll_factor": "1.0", "button_map": "0",
+            "mouse_scroll_button": "274", "trackpad_scroll_button": "274",
+            "touch_enable": "1", "xwayland_persistence": "1",
+            "sync_obj_enable": "1", "allow_shortcuts_inhibit": "1",
+            "allow_tearing": "0", "hdr_depth": "2",
+            "enable_border_resize": "1", "border_resize_size": "10",
+            "drag_corner": "3", "scroller_prefer_overspread": "1",
+            "edge_scroller_focus_allow_speed": "0.0",
+            "mouse_accel_profile": "2", "trackpad_accel_profile": "2",
+            "cursor_hide_on_keypress": "0",
+        }
+        for key, default in expected.items():
+            self.assertIn(key, ms.SCHEMA_OPTIONS)
+            self.assertEqual(ms.SCHEMA_OPTIONS[key].default, default,
+                             "default for %s" % key)
+
+
+class RecordValidationTests(unittest.TestCase):
+    def test_monitor_ok(self):
+        ok, err = ms.validate_record("monitor", {"name": "eDP-1",
+                                                 "scale": "1.25"})
+        self.assertTrue(ok, err)
+
+    def test_monitor_needs_identifier(self):
+        ok, err = ms.validate_record("monitor", {"scale": "1.25"})
+        self.assertFalse(ok)
+        self.assertIn("name", err)
+
+    def test_monitor_mode_fields_together(self):
+        ok, _ = ms.validate_record("monitor", {"name": "x", "width": "1920"})
+        self.assertFalse(ok)
+        ok, _ = ms.validate_record("monitor", {"name": "x", "width": "1920",
+                                               "height": "1080",
+                                               "refresh": "60"})
+        self.assertTrue(ok)
+
+    def test_monitor_xy_together(self):
+        ok, _ = ms.validate_record("monitor", {"name": "x", "x": "10"})
+        self.assertFalse(ok)
+
+    def test_unknown_field_refused(self):
+        ok, err = ms.validate_record("window_rule", {"nonsense": "1"})
+        self.assertFalse(ok)
+        self.assertIn("unknown field", err)
+
+    def test_window_rule_needs_match(self):
+        ok, _ = ms.validate_record("window_rule", {"is_floating": "1"})
+        self.assertFalse(ok)
+        ok, _ = ms.validate_record("window_rule", {"app_id": "foot"})
+        self.assertTrue(ok)
+
+    def test_bool_and_choice_fields(self):
+        ok, _ = ms.validate_record("layer_rule",
+                                   {"layer_name": "rofi",
+                                    "animation_type_open": "slide"})
+        self.assertTrue(ok)
+        ok, _ = ms.validate_record("layer_rule",
+                                   {"layer_name": "rofi",
+                                    "animation_type_open": "sideways"})
+        self.assertFalse(ok)
+        ok, _ = ms.validate_record("tag_rule", {"id": "3",
+                                                "open_as_floating": "maybe"})
+        self.assertFalse(ok)
+
+    def test_ranges(self):
+        ok, _ = ms.validate_record("tag_rule", {"id": "99"})
+        self.assertFalse(ok)
+        ok, _ = ms.validate_record("monitor", {"name": "x", "scale": "99999"})
+        self.assertFalse(ok)
+        ok, _ = ms.validate_record("monitor", {"name": "x", "rr": "8"})
+        self.assertFalse(ok)
+
+    def test_parse_kv(self):
+        kv = ms._parse_record_kv("name:eDP-1, scale:1.25, vrr:1")
+        self.assertEqual(kv, {"name": "eDP-1", "scale": "1.25", "vrr": "1"})
+        with self.assertRaises(ms.ConfigError):
+            ms._parse_record_kv("justtext")
+        with self.assertRaises(ms.ConfigError):
+            ms._parse_record_kv("name:x, name:y")
+
+    def test_render_and_update(self):
+        home = tempfile.mkdtemp()
+        old_home = os.environ["HOME"]
+        os.environ["HOME"] = home
+        try:
+            os.makedirs(os.path.join(home, ".config/mango"))
+            rf = ms.RuleFile(os.path.join(home, ".config/mango/rule.conf"))
+            rf.add_kv("tag_rule", {"id": "2", "layout_name": "scroller"})
+            rf.save()
+            text = open(rf.real).read()
+            self.assertIn("tag_rule = id:2, layout_name:scroller", text)
+            index, kv = rf.records_kv("tag_rule")[0]
+            self.assertEqual(kv.get("layout_name"), "scroller")
+            rf.update_kv(index, {"id": "2", "layout_name": "tile"})
+            rf.save()
+            self.assertIn("layout_name:tile", open(rf.real).read())
+        finally:
+            os.environ["HOME"] = old_home
+            shutil.rmtree(home, ignore_errors=True)
+
+
+class BackupAndArchiveTests(TempHomeTestCase):
+    def write(self, name, text):
+        return TempHomeTestCase.write(self, name, text)
+
+    def test_backup_roundtrip_and_restore(self):
+        self.write("config.conf", "gaps_in=5\n")
+        cfg = engine().load()
+        cfg.set("gaps_in", "20")
+        cfg.save()
+        backups = ms.list_backups()
+        self.assertTrue(backups)
+        stamp, files = backups[0]
+        # break the config, then restore
+        self.write("config.conf", "broken=1\n")
+        count, message = ms.restore_backup(stamp)
+        self.assertEqual(count, 1, message)
+        # a snapshot restores the state saved before the session's edits
+        self.assertIn("gaps_in=5", open(self.root).read())
+        # the current (broken) state was snapshotted as pre-restore-*
+        stamps = [s for s, _f in ms.list_backups()
+                  if s.startswith("pre-restore-")]
+        self.assertTrue(stamps)
+        self.assertIn("broken=1", open(
+            os.path.join(os.environ["HOME"], ".cache/mango-settings/backups",
+                         stamps[0], "config.conf")).read())
+
+    def test_export_import_roundtrip(self):
+        self.write("config.conf", "gaps_in=5\n")
+        self.write("bind.conf", "bind=SUPER,r,reload_config\n")
+        dest = os.path.join(self.home, "export.tar.gz")
+        ok, message = ms.export_config(dest)
+        self.assertTrue(ok, message)
+        self.assertTrue(os.path.isfile(dest))
+        # wipe part of the config, then import over it
+        os.remove(os.path.join(self.cfgdir, "bind.conf"))
+        count, message = ms.import_config(dest)
+        self.assertEqual(count, 2, message)
+        self.assertIn("gaps_in=5", open(self.root).read())
+        self.assertIn("reload_config",
+                      open(os.path.join(self.cfgdir, "bind.conf")).read())
+        # a pre-import backup snapshot must exist
+        stamps = [s for s, _f in ms.list_backups() if s.startswith("pre-import")]
+        self.assertTrue(stamps)
+
+    def test_import_rejects_path_escape(self):
+        import tarfile
+        archive = os.path.join(self.home, "evil.tar.gz")
+        payload = os.path.join(self.home, "payload.txt")
+        with open(payload, "w") as fh:
+            fh.write("x")
+        with tarfile.open(archive, "w:gz") as tf:
+            tf.add(payload, arcname="../../escape.txt")
+        count, _message = ms.import_config(archive)
+        self.assertEqual(count, 0)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.home, "escape.txt")))
+
+
+class IssueFormatTests(unittest.TestCase):
+    def test_str_with_location(self):
+        issue = ms.Issue(ms.Issue.ERROR, "boom", "/tmp/config.conf", 7)
+        self.assertEqual(str(issue), "error[/tmp/config.conf:7]: boom")
+
+    def test_str_without_location(self):
+        issue = ms.Issue(ms.Issue.WARNING, "careful")
+        self.assertEqual(str(issue), "warning[]: careful")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

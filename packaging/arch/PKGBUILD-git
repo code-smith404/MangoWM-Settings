@@ -1,7 +1,7 @@
 # Maintainer: Harikesh Verma <code-smith404@users.noreply.github.com>
 # Development snapshot of mango-settings (tracks the default branch).
 pkgname=mango-settings-git
-pkgver=2.3.0.r0.g0000000
+pkgver=2.4.0.r0.g0000000
 pkgrel=1
 pkgdesc="GTK3 settings manager for the MangoWM Wayland compositor (git)"
 arch=('any')

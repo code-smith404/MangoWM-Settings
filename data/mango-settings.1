@@ -1,4 +1,4 @@
-.TH MANGO-SETTINGS 1 "2025" "mango-settings 2.3.0" "User Commands"
+.TH MANGO-SETTINGS 1 "2026-11-26" "mango-settings 2.4.0" "User Commands"
 .SH NAME
 mango-settings \- graphical settings manager for the MangoWM Wayland compositor
 .SH SYNOPSIS
@@ -15,7 +15,13 @@ is a GTK 3 application that edits MangoWM's configuration files
 preserving comments, ordering, symlinks and permissions.
 .PP
 Changes are written atomically after the original files have been backed
-up to \fI~/.cache/mango-settings/backups/\fR.
+up to \fI~/.cache/mango-settings/backups/\fR.  Edits made to the config
+outside the app are detected and can be reloaded with one click.
+.PP
+The schema covers every top-level option MangoWM itself parses, and the
+rule editors write Mango's current \fBkey:value\fR record syntax for
+\fImonitor\fR, \fItag_rule\fR, \fIwindow_rule\fR, \fIlayer_rule\fR and
+\fIdevice_rule\fR records.
 .SH OPTIONS
 .TP
 .BR \-\-page " " \fIPAGE\fR
@@ -54,10 +60,12 @@ The GUI needs a running Wayland or X session. Use \fB\-\-check\fR,
 MangoWM's main configuration file.
 .TP
 .I ~/.config/mango-settings/settings.ini
-Mango Settings' own preferences (theme, window geometry, blur).
+Mango Settings' own preferences (theme, accent color, window geometry,
+blur).
 .TP
 .I ~/.cache/mango-settings/backups/
-Timestamped backups written before every save.
+Timestamped backups written before every save, before restores
+(\fBpre\-restore\-*\fR) and before imports (\fBpre\-import\-*\fR).
 .SH EXIT STATUS
 .TP
 .B 0
