@@ -4686,13 +4686,13 @@ def run_gui(args):
             on = self.blur_enabled() and getattr(self.window, "translucent", False)
             dark = bool(getattr(self, "_prefer_dark", False))
             if dark:
-                bg, fg, card = "#090703", "#f3f2ed", "#191510"
-                border, primary, primary_fg = "rgba(255,255,255,0.10)", "#f3b01d", "#1a0f01"
+                bg, fg, card = "#090705", "#f3f2ed", "#191510"
+                border, primary, primary_fg = "rgba(255,255,255,0.10)", "#f3b01d", "#1a0f03"
                 muted_fg, sidebar = "#bbb7ae", "#191510"
                 destructive = "#ff6467"
             else:
                 bg, fg, card = "#fefdfa", "#291d0f", "#ffffff"
-                border, primary, primary_fg = "#e6e1d3", "#f5aa00", "#412705"
+                border, primary, primary_fg = "#e6e1d3", "#f5aa00", "#412706"
                 muted_fg, sidebar = "#635646", "#fcfaf3"
                 destructive = "#e7000b"
             bg_a = "0.80" if on else "1.0"
